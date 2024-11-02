@@ -31,6 +31,7 @@ type Provider struct {
 	lastHandleFetched  time.Time
 	lastHandleCacheFor time.Duration
 	cacheMu            sync.Mutex
+	httpClient         *http.Client
 }
 
 type DiscoverOptions struct {
@@ -44,6 +45,10 @@ type DiscoverOptions struct {
 	// to verify against. Results from this will not be subject to the normal
 	// cache duration for the provider.
 	OverridePublicHandle PublicHandle
+
+	// HTTPClient sets the client used for discovery actions. Defaults to
+	// http.DefaultClient
+	HTTPClient *http.Client
 }
 
 func DiscoverProvider(ctx context.Context, issuer string, opts *DiscoverOptions) (*Provider, error) {
@@ -53,6 +58,9 @@ func DiscoverProvider(ctx context.Context, issuer string, opts *DiscoverOptions)
 	}
 
 	if opts != nil {
+		if opts.HTTPClient != nil {
+			p.httpClient = opts.HTTPClient
+		}
 		if opts.OverridePublicHandle != nil {
 			p.overrideHandle = opts.OverridePublicHandle
 		}
@@ -66,7 +74,7 @@ func DiscoverProvider(ctx context.Context, issuer string, opts *DiscoverOptions)
 	if err != nil {
 		return nil, fmt.Errorf("creating request for %s: %w", cfgURL, err)
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := p.getHTTPClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("error fetching %s: %v", cfgURL, err)
 	}
@@ -113,7 +121,7 @@ func (p *Provider) PublicHandle(ctx context.Context) (*keyset.Handle, error) {
 			return nil, fmt.Errorf("creating request for %s: %w", p.Metadata.JWKSURI, err)
 		}
 		req = req.WithContext(ctx)
-		res, err := http.DefaultClient.Do(req)
+		res, err := p.getHTTPClient().Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get keys from %s: %v", p.Metadata.JWKSURI, err)
 		}
@@ -150,6 +158,9 @@ func (p *Provider) VerifyToken(ctx context.Context, rawJWT string, validatorOpts
 	if cacheFetchErr == nil {
 		h = newH
 	}
+
+	// TODO - we should check to see if we have the key ID already cached, and
+	// if so skip the re-fetch.
 
 	// we ignore the error for now, and try and verify regardless. if it fails,
 	// then we can return the cache error.
@@ -269,6 +280,13 @@ func (p *Provider) Userinfo(ctx context.Context, tokenSource oauth2.TokenSource)
 	// https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse
 
 	return &cl, nil
+}
+
+func (p *Provider) getHTTPClient() *http.Client {
+	if p.httpClient != nil {
+		return p.httpClient
+	}
+	return http.DefaultClient
 }
 
 type staticPublicHandle struct {

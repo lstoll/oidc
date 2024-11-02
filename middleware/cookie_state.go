@@ -16,36 +16,40 @@ import (
 )
 
 const (
-	loginCookiePrefix = "s-"
-	tokenCookieSuffix = "-t"
+	loginCookiePrefix = "_l_"
+	tokenCookieSuffix = "_t"
 )
 
+// DefaultCookieTemplate is the default cookie used, unless otherwise
+// configured.
+var DefaultCookieTemplate = &http.Cookie{
+	Name:     "oidc",
+	HttpOnly: true,
+	Secure:   true,
+	SameSite: http.SameSiteLaxMode,
+}
+
+// Cookiestore is a basic implementation of the middleware's session store, that
+// stores values in a series of cookies. These are not signed or encrypted, so
+// only the ID token is tracked - the access token and refresh tokens are
+// discareded, to avoid risk of them leaking. The login state is also stored
+// unauthenticated, applications should take this in to mind. Cookie storage is
+// limited, so too many in-flight logins may cause issues.
+//
+// This provides a simple default, but it is generally recommended to use a
+// server-side session store.
 type Cookiestore struct {
 	// CookieTemplate is used to create the cookie we track the session ID in.
-	// It must have at least the name set.
+	// It must have at least the name set. Value and expiration fields will be
+	// ignored, and set appropriately. If not set, DefaultCookieTemplate will be
+	// used.
 	CookieTemplate *http.Cookie
 }
 
-// NewMemorySessionStore creates a simple session store, that tracks state in
-// memory. It is mainly used for testing, it is not suitable for anything
-// outside a single process as the state will not be shared. It also does not
-// have robust cleaning of stored session data.
-//
-// It is provided with a "template" http.Cookie - this will be used for the
-// cookies the session ID is tracked with. It must have at least a name set.
-func NewMemorySessionStore(template http.Cookie) (SessionStore, error) {
-	if template.Name == "" {
-		return nil, fmt.Errorf("template must have a name")
-	}
-	return &Cookiestore{
-		CookieTemplate: &template,
-	}, nil
-}
-
-func (c *Cookiestore) Get(r *http.Request) (*SessionData, error) {
+func (c *Cookiestore) GetOIDCSession(r *http.Request) (*SessionData, error) {
 	sd := &SessionData{}
 
-	idtc, err := r.Cookie(c.CookieTemplate.Name + tokenCookieSuffix)
+	idtc, err := r.Cookie(c.cookieNamePrefix() + tokenCookieSuffix)
 	if err != nil && !errors.Is(err, http.ErrNoCookie) {
 		return nil, fmt.Errorf("getting cookie: %w", err)
 	} else if err == nil {
@@ -59,8 +63,8 @@ func (c *Cookiestore) Get(r *http.Request) (*SessionData, error) {
 
 	// re-construct the login state
 	for _, ec := range r.Cookies() {
-		if strings.HasPrefix(ec.Name, c.CookieTemplate.Name+loginCookiePrefix) {
-			state := strings.TrimPrefix(ec.Name, c.CookieTemplate.Name+loginCookiePrefix)
+		if strings.HasPrefix(ec.Name, c.cookieNamePrefix()+loginCookiePrefix) {
+			state := strings.TrimPrefix(ec.Name, c.cookieNamePrefix()+loginCookiePrefix)
 			v, err := url.ParseQuery(ec.Value)
 			if err != nil {
 				continue // ignore the data on error
@@ -81,23 +85,23 @@ func (c *Cookiestore) Get(r *http.Request) (*SessionData, error) {
 	return sd, nil
 }
 
-func (c *Cookiestore) Save(w http.ResponseWriter, r *http.Request, d *SessionData) error {
+func (c *Cookiestore) SaveOIDCSession(w http.ResponseWriter, r *http.Request, d *SessionData) error {
 	if d.Token != nil {
 		tok, exp, err := peekIDT(d.Token.Token)
 		if err != nil {
 			return fmt.Errorf("processing id_token: %w", err)
 		}
-		if tc, err := r.Cookie(c.CookieTemplate.Name + tokenCookieSuffix); err != nil || tc.Value != tok {
+		if tc, err := r.Cookie(c.cookieNamePrefix() + tokenCookieSuffix); err != nil || tc.Value != tok {
 			// no existing cookie for this, save it
 			tc := c.newCookie()
-			tc.Name = c.CookieTemplate.Name + tokenCookieSuffix
+			tc.Name = c.cookieNamePrefix() + tokenCookieSuffix
 			tc.Expires = exp
 			tc.Value = tok
 			http.SetCookie(w, tc)
 		}
 	} else {
 		dc := c.newCookie()
-		dc.Name = c.CookieTemplate.Name + tokenCookieSuffix
+		dc.Name = c.cookieNamePrefix() + tokenCookieSuffix
 		dc.MaxAge = -1
 		http.SetCookie(w, dc)
 	}
@@ -106,7 +110,7 @@ func (c *Cookiestore) Save(w http.ResponseWriter, r *http.Request, d *SessionDat
 	currLogins := map[string]struct{}{}
 	for _, l := range d.Logins {
 		currLogins[l.State] = struct{}{}
-		_, err := r.Cookie(c.CookieTemplate.Name + loginCookiePrefix + l.State)
+		_, err := r.Cookie(c.cookieNamePrefix() + loginCookiePrefix + l.State)
 		// state data is not mutable, only set if we don't already have a
 		// cookie.
 		if err != nil {
@@ -120,14 +124,14 @@ func (c *Cookiestore) Save(w http.ResponseWriter, r *http.Request, d *SessionDat
 			v.Set("ex", strconv.Itoa(l.Expires))
 			lc := c.newCookie()
 			lc.Expires = time.Unix(int64(l.Expires), 0)
-			lc.Name = c.CookieTemplate.Name + loginCookiePrefix + l.State
+			lc.Name = c.cookieNamePrefix() + loginCookiePrefix + l.State
 			lc.Value = v.Encode()
 			http.SetCookie(w, lc)
 		}
 	}
 	for _, ec := range r.Cookies() {
-		if strings.HasPrefix(ec.Name, c.CookieTemplate.Name+loginCookiePrefix) {
-			state := strings.TrimPrefix(ec.Name, c.CookieTemplate.Name+loginCookiePrefix)
+		if strings.HasPrefix(ec.Name, c.cookieNamePrefix()+loginCookiePrefix) {
+			state := strings.TrimPrefix(ec.Name, c.cookieNamePrefix()+loginCookiePrefix)
 			_, ok := currLogins[state]
 			if !ok {
 				// a cookie exists that is not for a current login, remove
@@ -143,8 +147,19 @@ func (c *Cookiestore) Save(w http.ResponseWriter, r *http.Request, d *SessionDat
 
 func (c *Cookiestore) newCookie() *http.Cookie {
 	nc := new(http.Cookie)
-	*nc = *c.CookieTemplate
+	if c.CookieTemplate != nil {
+		*nc = *c.CookieTemplate
+	} else {
+		*nc = *DefaultCookieTemplate
+	}
 	return nc
+}
+
+func (c *Cookiestore) cookieNamePrefix() string {
+	if c.CookieTemplate != nil {
+		return c.CookieTemplate.Name
+	}
+	return DefaultCookieTemplate.Name
 }
 
 func peekIDT(t *oauth2.Token) (tok string, exp time.Time, _ error) {
