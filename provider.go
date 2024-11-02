@@ -70,11 +70,11 @@ func DiscoverProvider(ctx context.Context, issuer string, opts *DiscoverOptions)
 	if err != nil {
 		return nil, fmt.Errorf("error fetching %s: %v", cfgURL, err)
 	}
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("expected status %d from %s, got: %d", http.StatusOK, cfgURL, res.StatusCode)
 	}
 	err = json.NewDecoder(res.Body).Decode(p.Metadata)
-	_ = res.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("error decoding provider metadata response: %v", err)
 	}

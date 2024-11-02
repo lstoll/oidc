@@ -12,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -277,14 +278,41 @@ func TestMiddleware_HappyPath(t *testing.T) {
 	}
 	client := &http.Client{Jar: jar}
 
-	resp, err := client.Get(baseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// we run a bunch of concurrent iterations, to make sure that state mismatch
+	// etc. doesn't happen
+	var (
+		flowIters = 10
+		wg        sync.WaitGroup
+		respC     = make(chan *http.Response, flowIters)
+		errC      = make(chan error, flowIters)
+	)
+	for i := 1; i <= flowIters; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-	body := checkResponse(t, resp)
-	if !bytes.Equal([]byte("sub: valid-subject"), body) {
-		t.Fatalf("wanted body %s, got %s", "sub: valid-subject", string(body))
+			resp, err := client.Get(baseURL)
+			if err != nil {
+				errC <- err
+			}
+			respC <- resp
+		}()
+	}
+	wg.Wait()
+	close(errC)
+	close(respC)
+
+	for err := range errC {
+		t.Errorf("error in request: %v", err)
+	}
+	if len(respC) == 0 {
+		t.Fatal("no responses on channel")
+	}
+	for resp := range respC {
+		body := checkResponse(t, resp)
+		if !bytes.Equal([]byte("sub: valid-subject"), body) {
+			t.Errorf("wanted body %s, got %s", "sub: valid-subject", string(body))
+		}
 	}
 }
 

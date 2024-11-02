@@ -2,6 +2,7 @@ package oidc
 
 import (
 	"encoding/json"
+	"errors"
 
 	"golang.org/x/oauth2"
 )
@@ -16,7 +17,9 @@ func IDToken(tok *oauth2.Token) (string, bool) {
 // exists because the serialized form of the oauth2 token does not contain the
 // extra/ID token info, so this safely allows a token to be stored and t
 func TokenWithID(tok *oauth2.Token, idToken string) *oauth2.Token {
-	return nil
+	return tok.WithExtra(map[string]any{
+		"id_token": idToken,
+	})
 }
 
 // MarshaledToken is a wrapper for an oauth2 token, that allows the ID Token to
@@ -26,27 +29,23 @@ type MarshaledToken struct {
 	*oauth2.Token
 }
 
-// marshaledToken is our internal state we serialize/deserialize from,
-// so we can avoid exposing the ID token directly and in conflict with the
+// marshaledToken is our internal state we serialize/deserialize from
 type marshaledToken struct {
 	*oauth2.Token
 	IDToken string `json:"id_token,omitempty"`
 }
 
 func (t *MarshaledToken) UnmarshalJSON(b []byte) error {
+	if t == nil {
+		return errors.New("UnmarshalJSON: destination pointer is nil")
+	}
 	var mt marshaledToken
 	if err := json.Unmarshal(b, &mt); err != nil {
 		return err
 	}
-	if t == nil {
-		nt := new(MarshaledToken)
-		*t = *nt
-	}
 	t.Token = mt.Token
 	if mt.IDToken != "" {
-		t.Token = t.Token.WithExtra(map[string]any{
-			"id_token": mt.IDToken,
-		})
+		t.Token = TokenWithID(t.Token, mt.IDToken)
 	}
 	return nil
 }

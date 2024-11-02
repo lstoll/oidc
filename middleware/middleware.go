@@ -2,18 +2,19 @@ package middleware
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/lstoll/oidc"
+	"github.com/lstoll/oidc/internal"
 	"golang.org/x/oauth2"
 )
+
+const loginStateExpiresAfter = 5 * time.Minute
 
 // DefaultKeyRefreshIterval is the default interval we try and refresh signing
 // keys from the issuer.
@@ -29,14 +30,21 @@ func errAttr(err error) slog.Attr { return slog.String("err", err.Error()) }
 // requests. This should be stored using a method that does not reveal the
 // contents to the end user in any way.
 type SessionData struct {
+	// Logins tracks state for in-progress logins.
+	Logins []SessionDataLogin `json:"logins,omitempty"`
+	// Token contains the issued token from a successful authentication flow.
+	Token *oidc.MarshaledToken `json:"token,omitempty"`
+}
+
+type SessionDataLogin struct {
 	// State for an in-progress auth flow.
 	State string `json:"oidc_state,omitempty"`
 	// PKCEChallenge for the in-progress auth flow
 	PKCEChallenge string `json:"pkce_challenge,omitempty"`
 	// ReturnTo is where we should navigate to at the end of the flow
 	ReturnTo string `json:"oidc_return_to,omitempty"`
-	// Token stores the returned oauth2.Token
-	Token *oidc.MarshaledToken `json:"token,omitempty"`
+	// Expires is when this can be discarded, Unix time.
+	Expires int `json:"expires,omitempty"`
 }
 
 // SessionStore are used for managing state across requests.
@@ -228,7 +236,13 @@ func (h *Handler) authenticateCallback(r *http.Request, session *SessionData) (s
 		return "", nil
 	}
 
-	if session.State == "" || session.State != state {
+	var foundLogin *SessionDataLogin
+	for _, sl := range session.Logins {
+		if state != "" && sl.State == state {
+			foundLogin = &sl
+		}
+	}
+	if foundLogin == nil {
 		return "", fmt.Errorf("state did not match")
 	}
 
@@ -237,7 +251,7 @@ func (h *Handler) authenticateCallback(r *http.Request, session *SessionData) (s
 		return "", err
 	}
 
-	token, err := oauth2cfg.Exchange(ctx, code, oauth2.VerifierOption(session.PKCEChallenge))
+	token, err := oauth2cfg.Exchange(ctx, code, oauth2.VerifierOption(foundLogin.PKCEChallenge))
 	if err != nil {
 		return "", err
 	}
@@ -250,13 +264,15 @@ func (h *Handler) authenticateCallback(r *http.Request, session *SessionData) (s
 	}
 
 	session.Token = &oidc.MarshaledToken{Token: token}
-	session.State = ""
 
-	returnTo := session.ReturnTo
+	returnTo := foundLogin.ReturnTo
 	if returnTo == "" {
 		returnTo = h.BaseURL
 	}
-	session.ReturnTo = ""
+
+	session.Logins = slices.DeleteFunc(session.Logins, func(sl SessionDataLogin) bool {
+		return sl.State == state
+	})
 
 	return returnTo, nil
 }
@@ -269,20 +285,27 @@ func (h *Handler) startAuthentication(r *http.Request, session *SessionData) (st
 
 	session.Token = nil
 
-	session.State = randomState()
-	session.PKCEChallenge = oauth2.GenerateVerifier()
-
-	session.ReturnTo = ""
+	var (
+		state         = internal.RandText()
+		pkceChallenge = oauth2.GenerateVerifier()
+		returnTo      string
+	)
 	if r.Method == http.MethodGet {
-		session.ReturnTo = r.URL.RequestURI()
+		returnTo = r.URL.RequestURI()
 	}
+	session.Logins = append(session.Logins, SessionDataLogin{
+		State:         state,
+		PKCEChallenge: pkceChallenge,
+		ReturnTo:      returnTo,
+		Expires:       int(time.Now().Add(loginStateExpiresAfter).Unix()),
+	})
 
-	opts := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(session.PKCEChallenge)}
+	opts := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(pkceChallenge)}
 	if len(h.ACRValues) > 0 {
 		opts = append(opts, oidc.SetACRValues(h.ACRValues))
 	}
 
-	return oauth2cfg.AuthCodeURL(session.State, opts...), nil
+	return oauth2cfg.AuthCodeURL(state, opts...), nil
 }
 
 func (h *Handler) getOIDCClient(ctx context.Context) (*oidc.Provider, *oauth2.Config, error) {
@@ -354,13 +377,4 @@ func TokenSourceFromContext(ctx context.Context) oauth2.TokenSource {
 	}
 
 	return oauth2.StaticTokenSource(cd.token)
-}
-
-func randomState() string {
-	b := make([]byte, 16)
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		panic(err)
-	}
-
-	return base64.RawStdEncoding.EncodeToString(b)
 }
