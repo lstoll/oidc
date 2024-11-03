@@ -2,13 +2,85 @@ package oidc
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"time"
+
+	"github.com/tink-crypto/tink-go/v2/jwt"
 )
 
-// IDClaims represents the set of JWT claims for a user ID Token.
+// https://datatracker.ietf.org/doc/html/rfc9068#name-header
+const typJWTAccessToken = "at+jwt"
+
+// StrOrSlice represents a JWT claim that can either be a single string, or a
+// list of strings..
+type StrOrSlice []string
+
+// Contains returns true if a passed item is found in the set
+func (a StrOrSlice) Contains(s string) bool {
+	return slices.Contains(a, s)
+}
+
+func (a StrOrSlice) MarshalJSON() ([]byte, error) {
+	if len(a) == 1 {
+		return json.Marshal(a[0])
+	}
+	return json.Marshal([]string(a))
+}
+
+func (a *StrOrSlice) UnmarshalJSON(b []byte) error {
+	var ua any
+	if err := json.Unmarshal(b, &ua); err != nil {
+		return err
+	}
+
+	switch ja := ua.(type) {
+	case string:
+		*a = []string{ja}
+	case []any:
+		aa := make([]string, len(ja))
+		for i, ia := range ja {
+			sa, ok := ia.(string)
+			if !ok {
+				return fmt.Errorf("failed to unmarshal audience, expected []string but found %T", ia)
+			}
+			aa[i] = sa
+		}
+		*a = aa
+	default:
+		return fmt.Errorf("failed to unmarshal audience, expected string or []string but found %T", ua)
+	}
+
+	return nil
+}
+
+// UnixTime represents the number representing the number of seconds from
+// 1970-01-01T0:0:0Z as measured in UTC until the date/time. This is the type
+// IDToken uses to represent dates
+type UnixTime int64
+
+// Time returns the *time.Time this represents
+func (u UnixTime) Time() time.Time {
+	return time.Unix(int64(u), 0)
+}
+
+func (u UnixTime) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.FormatInt(int64(u), 10)), nil
+}
+
+func (u *UnixTime) UnmarshalJSON(b []byte) error {
+	flt, err := strconv.ParseFloat(string(b), 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse UnixTime: %v", err)
+	}
+	*u = UnixTime(int64(flt))
+	return nil
+}
+
+// IDClaims represents the set of JWT claims for a user ID Token, or userinfo
+// endpoint.
 //
 // https://openid.net/specs/openid-connect-core-1_0.html#IDClaims
 type IDClaims struct {
@@ -92,166 +164,161 @@ type IDClaims struct {
 	// even when the authorized party is the same as the sole audience. The azp
 	// value is a case sensitive string containing a StringOrURI value.
 	AZP string `json:"azp,omitempty"`
-
-	// Extra are additional claims, that the standard claims will be merged in
-	// to. If a key is overridden here, the struct value wins.
-	Extra map[string]any `json:"-"`
-
-	// keep the raw data here, so we can unmarshal in to custom structs
-	raw json.RawMessage
 }
 
-func (c IDClaims) String() string {
-	m, err := json.Marshal(&c)
+func (i *IDClaims) String() string {
+	m, err := json.Marshal(i)
 	if err != nil {
-		return fmt.Sprintf("sub: %s failed: %v", c.Subject, err)
+		return fmt.Sprintf("sub: %s failed: %v", i.Subject, err)
 	}
 
 	return string(m)
 }
 
-func (c IDClaims) MarshalJSON() ([]byte, error) {
-	// avoid recursing on this method
-	type ids IDClaims
-	id := ids(c)
+func (i *IDClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
+	var exp *time.Time
+	if i.Expiry != 0 {
+		t := i.Expiry.Time()
+		exp = &t
+	}
+	var nbf *time.Time
+	if i.NotBefore != 0 {
+		t := i.NotBefore.Time()
+		nbf = &t
+	}
+	var iat *time.Time
+	if i.IssuedAt != 0 {
+		t := i.IssuedAt.Time()
+		iat = &t
+	}
 
-	sj, err := json.Marshal(&id)
+	opts := &jwt.RawJWTOptions{
+		Issuer:       ptrOrNil(i.Issuer),
+		Subject:      ptrOrNil(i.Subject),
+		Audiences:    i.Audience,
+		ExpiresAt:    exp,
+		NotBefore:    nbf,
+		IssuedAt:     iat,
+		CustomClaims: make(map[string]any),
+	}
+	if i.AuthTime != 0 {
+		opts.CustomClaims["auth_time"] = int(i.AuthTime)
+	}
+	if i.Nonce != "" {
+		opts.CustomClaims["nonce"] = i.Nonce
+	}
+	if i.ACR != "" {
+		opts.CustomClaims["acr"] = i.ACR
+	}
+	if i.AMR != nil {
+		opts.CustomClaims["amr"] = sliceToAnySlice(i.AMR)
+	}
+	if i.AZP != "" {
+		opts.CustomClaims["azp"] = i.AZP
+	}
+	for k, v := range extraClaims {
+		if _, ok := opts.CustomClaims[k]; ok {
+			return nil, fmt.Errorf("duplicate/reserved claim %s", k)
+		}
+		opts.CustomClaims[k] = v
+	}
+
+	raw, err := jwt.NewRawJWT(opts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("constructing raw JWT from claims: %w", err)
 	}
 
-	sm := map[string]any{}
-	if err := json.Unmarshal(sj, &sm); err != nil {
-		return nil, err
-	}
-
-	om := map[string]any{}
-
-	for k, v := range c.Extra {
-		om[k] = v
-	}
-
-	for k, v := range sm {
-		om[k] = v
-	}
-
-	return json.Marshal(om)
+	return raw, nil
 }
 
-func (c *IDClaims) UnmarshalJSON(b []byte) error {
-	type ids IDClaims
-	id := ids{}
-
-	if err := json.Unmarshal(b, &id); err != nil {
-		return err
-	}
-
-	em := map[string]any{}
-
-	if err := json.Unmarshal(b, &em); err != nil {
-		return err
-	}
-
-	for _, f := range []string{
-		"iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "acr", "amr", "azp",
-	} {
-		delete(em, f)
-	}
-
-	if len(em) > 0 {
-		id.Extra = em
-	}
-
-	id.raw = b
-
-	*c = IDClaims(id)
-
-	return nil
-}
-
-// Unmarshal unpacks the raw JSON data from this token into the passed type.
-func (c *IDClaims) Unmarshal(into any) error {
-	if c.raw == nil {
-		// gracefully handle the weird case where the user might want to call
-		// this on a struct of their own creation, rather than one retrieved
-		// from a remote source
-		b, err := json.Marshal(c)
+func IDClaimsFromJWT(verified *jwt.VerifiedJWT) (*IDClaims, error) {
+	c := new(IDClaims)
+	var errs error
+	if verified.HasIssuer() {
+		v, err := verified.Issuer()
 		if err != nil {
-			return err
+			errs = errors.Join(errs, err)
 		}
-		c.raw = b
+		c.Issuer = v
 	}
-	return json.Unmarshal(c.raw, into)
-}
-
-// StrOrSlice represents a JWT claim that can either be a single string, or a
-// list of strings..
-type StrOrSlice []string
-
-// Contains returns true if a passed item is found in the set
-func (a StrOrSlice) Contains(s string) bool {
-	return slices.Contains(a, s)
-}
-
-func (a StrOrSlice) MarshalJSON() ([]byte, error) {
-	if len(a) == 1 {
-		return json.Marshal(a[0])
-	}
-	return json.Marshal([]string(a))
-}
-
-func (a *StrOrSlice) UnmarshalJSON(b []byte) error {
-	var ua any
-	if err := json.Unmarshal(b, &ua); err != nil {
-		return err
-	}
-
-	switch ja := ua.(type) {
-	case string:
-		*a = []string{ja}
-	case []any:
-		aa := make([]string, len(ja))
-		for i, ia := range ja {
-			sa, ok := ia.(string)
-			if !ok {
-				return fmt.Errorf("failed to unmarshal audience, expected []string but found %T", ia)
-			}
-			aa[i] = sa
+	if verified.HasSubject() {
+		v, err := verified.Subject()
+		if err != nil {
+			errs = errors.Join(errs, err)
 		}
-		*a = aa
-	default:
-		return fmt.Errorf("failed to unmarshal audience, expected string or []string but found %T", ua)
+		c.Subject = v
 	}
-
-	return nil
-}
-
-// UnixTime represents the number representing the number of seconds from
-// 1970-01-01T0:0:0Z as measured in UTC until the date/time. This is the type
-// IDToken uses to represent dates
-type UnixTime int64
-
-// NewUnixTime creates a UnixTime from the given Time, t
-func NewUnixTime(t time.Time) UnixTime {
-	return UnixTime(t.Unix())
-}
-
-// Time returns the *time.Time this represents
-func (u UnixTime) Time() time.Time {
-	return time.Unix(int64(u), 0)
-}
-
-func (u UnixTime) MarshalJSON() ([]byte, error) {
-	return []byte(strconv.FormatInt(int64(u), 10)), nil
-}
-
-func (u *UnixTime) UnmarshalJSON(b []byte) error {
-	flt, err := strconv.ParseFloat(string(b), 64)
-	if err != nil {
-		return fmt.Errorf("failed to parse UnixTime: %v", err)
+	if verified.HasAudiences() {
+		v, err := verified.Audiences()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Audience = StrOrSlice(v)
 	}
-	*u = UnixTime(int64(flt))
-	return nil
+	if verified.HasExpiration() {
+		v, err := verified.ExpiresAt()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Expiry = UnixTime(v.Unix())
+	}
+	if verified.HasNotBefore() {
+		v, err := verified.NotBefore()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.NotBefore = UnixTime(v.Unix())
+	}
+	if verified.HasIssuedAt() {
+		v, err := verified.IssuedAt()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.IssuedAt = UnixTime(v.Unix())
+	}
+	if verified.HasNumberClaim("auth_time") {
+		v, err := verified.NumberClaim("auth_time")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.AuthTime = UnixTime(v)
+	}
+	if verified.HasStringClaim("nonce") {
+		v, err := verified.StringClaim("nonce")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Nonce = v
+	}
+	if verified.HasStringClaim("acr") {
+		v, err := verified.StringClaim("acr")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.ACR = v
+	}
+	if verified.HasArrayClaim("amr") {
+		v, err := verified.ArrayClaim("amr")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		sv, err := anySliceToSlice[string](v)
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.AMR = sv
+	}
+	if verified.HasStringClaim("azp") {
+		v, err := verified.StringClaim("azp")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.AZP = v
+	}
+	if errs != nil {
+		return nil, errs
+	}
+	return c, nil
 }
 
 // AccessTokenClaims represents the set of JWT claims for an OAuth2 JWT Access
@@ -336,98 +403,219 @@ type AccessTokenClaims struct {
 	// https://datatracker.ietf.org/doc/html/rfc9068#section-2.2.3.1 |
 	// https://www.rfc-editor.org/rfc/rfc7643#section-4.1.2
 	Entitlements []string `json:"entitlements,omitempty"`
-
-	// LoginSessionID is the session ID of the login via OIDC.
-	// Application-speficic, used for auditing purposes.
-	LoginSessionID string `json:"lsid,omitempty"`
-
-	// Extra are additional claims, that the standard claims will be merged in
-	// to. If a key is overridden here, the struct value wins.
-	Extra map[string]any `json:"-"`
-
-	// keep the raw data here, so we can unmarshal in to custom structs
-	raw json.RawMessage
 }
 
-func (c AccessTokenClaims) MarshalJSON() ([]byte, error) {
-	// avoid recursing on this method
-	type ids AccessTokenClaims
-	id := ids(c)
-
-	sj, err := json.Marshal(&id)
+func (a *AccessTokenClaims) String() string {
+	m, err := json.Marshal(a)
 	if err != nil {
-		return nil, err
-	}
-
-	sm := map[string]any{}
-	if err := json.Unmarshal(sj, &sm); err != nil {
-		return nil, err
-	}
-
-	om := map[string]any{}
-
-	for k, v := range c.Extra {
-		om[k] = v
-	}
-
-	for k, v := range sm {
-		om[k] = v
-	}
-
-	return json.Marshal(om)
-}
-
-func (c *AccessTokenClaims) UnmarshalJSON(b []byte) error {
-	type ids AccessTokenClaims
-	id := ids{}
-
-	if err := json.Unmarshal(b, &id); err != nil {
-		return err
-	}
-
-	em := map[string]any{}
-
-	if err := json.Unmarshal(b, &em); err != nil {
-		return err
-	}
-
-	for _, f := range []string{
-		"iss", "sub", "aud", "exp", "iat", "client_id", "jti", "scope", "groups", "roles", "entitlements",
-	} {
-		delete(em, f)
-	}
-
-	if len(em) > 0 {
-		id.Extra = em
-	}
-
-	id.raw = b
-
-	*c = AccessTokenClaims(id)
-
-	return nil
-}
-
-// Unmarshal unpacks the raw JSON data from this token into the passed type.
-func (c *AccessTokenClaims) Unmarshal(into any) error {
-	if c.raw == nil {
-		// gracefully handle the weird case where the user might want to call
-		// this on a struct of their own creation, rather than one retrieved
-		// from a remote source
-		b, err := json.Marshal(c)
-		if err != nil {
-			return err
-		}
-		c.raw = b
-	}
-	return json.Unmarshal(c.raw, into)
-}
-
-func (c AccessTokenClaims) String() string {
-	m, err := json.Marshal(&c)
-	if err != nil {
-		return fmt.Sprintf("sub: %s failed: %v", c.Subject, err)
+		return fmt.Sprintf("sub: %s failed: %v", a.Subject, err)
 	}
 
 	return string(m)
+}
+
+func (a *AccessTokenClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
+	var exp *time.Time
+	if a.Expiry != 0 {
+		t := a.Expiry.Time()
+		exp = &t
+	}
+	var iat *time.Time
+	if a.IssuedAt != 0 {
+		t := a.IssuedAt.Time()
+		iat = &t
+	}
+
+	opts := &jwt.RawJWTOptions{
+		TypeHeader:   ptr(typJWTAccessToken),
+		Issuer:       ptrOrNil(a.Issuer),
+		Subject:      ptrOrNil(a.Subject),
+		Audiences:    a.Audience,
+		ExpiresAt:    exp,
+		JWTID:        ptrOrNil(a.JWTID),
+		IssuedAt:     iat,
+		CustomClaims: make(map[string]any),
+	}
+	if a.Scope != "" {
+		opts.CustomClaims["scope"] = a.Scope
+	}
+	if a.AuthTime != 0 {
+		opts.CustomClaims["auth_time"] = int(a.AuthTime)
+	}
+	if a.ACR != "" {
+		opts.CustomClaims["acr"] = a.ACR
+	}
+	if a.AMR != nil {
+		opts.CustomClaims["amr"] = sliceToAnySlice(a.AMR)
+	}
+	if a.Groups != nil {
+		opts.CustomClaims["groups"] = sliceToAnySlice(a.Groups)
+	}
+	if a.Groups != nil {
+		opts.CustomClaims["roles"] = sliceToAnySlice(a.Roles)
+	}
+	if a.Entitlements != nil {
+		opts.CustomClaims["entitlements"] = sliceToAnySlice(a.Entitlements)
+	}
+	for k, v := range extraClaims {
+		if _, ok := opts.CustomClaims[k]; ok {
+			return nil, fmt.Errorf("duplicate/reserved claim %s", k)
+		}
+		opts.CustomClaims[k] = v
+	}
+
+	raw, err := jwt.NewRawJWT(opts)
+	if err != nil {
+		return nil, fmt.Errorf("constructing raw JWT from claims: %w", err)
+	}
+
+	return raw, nil
+}
+
+func AccessTokenClaimsFromJWT(verified *jwt.VerifiedJWT) (*AccessTokenClaims, error) {
+	c := new(AccessTokenClaims)
+	var errs error
+	if verified.HasIssuer() {
+		v, err := verified.Issuer()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Issuer = v
+	}
+	if verified.HasSubject() {
+		v, err := verified.Subject()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Subject = v
+	}
+	if verified.HasAudiences() {
+		v, err := verified.Audiences()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Audience = StrOrSlice(v)
+	}
+	if verified.HasExpiration() {
+		v, err := verified.ExpiresAt()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Expiry = UnixTime(v.Unix())
+	}
+	if verified.HasJWTID() {
+		v, err := verified.JWTID()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.JWTID = v
+	}
+	if verified.HasIssuedAt() {
+		v, err := verified.IssuedAt()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.IssuedAt = UnixTime(v.Unix())
+	}
+	if verified.HasNumberClaim("auth_time") {
+		v, err := verified.NumberClaim("auth_time")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.AuthTime = UnixTime(v)
+	}
+	if verified.HasStringClaim("acr") {
+		v, err := verified.StringClaim("acr")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.ACR = v
+	}
+	if verified.HasArrayClaim("amr") {
+		v, err := verified.ArrayClaim("amr")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		sv, err := anySliceToSlice[string](v)
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.AMR = sv
+	}
+	if verified.HasStringClaim("scope") {
+		v, err := verified.StringClaim("scope")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Scope = v
+	}
+	if verified.HasArrayClaim("groups") {
+		v, err := verified.ArrayClaim("groups")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		sv, err := anySliceToSlice[string](v)
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Groups = sv
+	}
+	if verified.HasArrayClaim("roles") {
+		v, err := verified.ArrayClaim("roles")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		sv, err := anySliceToSlice[string](v)
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Groups = sv
+	}
+	if verified.HasArrayClaim("entitlements") {
+		v, err := verified.ArrayClaim("entitlements")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		sv, err := anySliceToSlice[string](v)
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Groups = sv
+	}
+	if errs != nil {
+		return nil, errs
+	}
+	return c, nil
+}
+
+func sliceToAnySlice[T any](v []T) []any {
+	r := make([]any, len(v))
+	for i, s := range v {
+		r[i] = s
+	}
+	return r
+}
+
+func anySliceToSlice[T any](v []any) ([]T, error) {
+	r := make([]T, len(v))
+	for i, s := range v {
+		v, ok := s.(T)
+		if !ok {
+			return nil, fmt.Errorf("type assert of %#v failed", s)
+		}
+		r[i] = v
+	}
+	return r, nil
+}
+
+func ptr[T any](v T) *T {
+	return &v
+}
+
+func ptrOrNil[T comparable](v T) *T {
+	var e T
+	if v == e {
+		return nil
+	}
+	return &v
 }
