@@ -270,23 +270,33 @@ func info(ctx context.Context, provider *oidc.Provider, ts oauth2.TokenSource, _
 	fmt.Printf("Access Token: %s\n", tok.AccessToken)
 	fmt.Printf("Access Token expires: %s\n", tok.Expiry.String())
 	if isJWT(tok.AccessToken) {
-		claims, err := provider.VerifyAccessToken(ctx, tok, oidc.VerificationOpts{IgnoreClientID: true})
+		jwt, claims, err := provider.VerifyAccessToken(ctx, tok, oidc.AccessTokenValidationOpts{IgnoreAudience: true})
 		if err != nil {
 			return fmt.Errorf("access token verification: %w", err)
 		}
 		fmt.Printf("Access token claims expires: %s\n", claims.Expiry.Time().String())
 		fmt.Printf("Access token claims: %v\n", claims)
+		jb, err := jwt.JSONPayload()
+		if err != nil {
+			return fmt.Errorf("getting json payload: %w", err)
+		}
+		fmt.Printf("Access token full claims: %v\n", string(jb))
 	}
 	fmt.Printf("Refresh Token: %s\n", tok.RefreshToken)
 	idt, ok := oidc.IDToken(tok)
 	if ok {
-		claims, err := provider.VerifyIDToken(ctx, tok, oidc.VerificationOpts{IgnoreClientID: true})
+		jwt, claims, err := provider.VerifyIDToken(ctx, tok, oidc.IDTokenValidationOpts{IgnoreAudience: true})
 		if err != nil {
 			return fmt.Errorf("ID token verification: %w", err)
 		}
 		fmt.Printf("ID token: %s\n", idt)
 		fmt.Printf("ID token claims expires: %s\n", claims.Expiry.Time().String())
-		fmt.Printf("ID token claims: %v\n", claims)
+		fmt.Printf("ID token standard claims: %v\n", claims)
+		jb, err := jwt.JSONPayload()
+		if err != nil {
+			return fmt.Errorf("getting json payload: %w", err)
+		}
+		fmt.Printf("ID token full claims: %v\n", string(jb))
 	}
 
 	return nil

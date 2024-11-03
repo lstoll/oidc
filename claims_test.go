@@ -2,200 +2,219 @@ package oidc
 
 import (
 	"encoding/json"
+	"fmt"
+	"math/rand/v2"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/tink-crypto/tink-go/v2/jwt"
 )
 
-func TestIDTokenMarshaling(t *testing.T) {
+func TestCustomMarshaling(t *testing.T) {
+	type container struct {
+		UnixTime         UnixTime
+		StrOrSliceSingle StrOrSlice
+		StrOrSliceSlice  StrOrSlice
+	}
+
+	c := container{
+		UnixTime:         UnixTime(must(time.Parse("2006-Jan-02", "2019-Nov-20")).Unix()),
+		StrOrSliceSingle: StrOrSlice([]string{"a"}),
+		StrOrSliceSlice:  StrOrSlice([]string{"a", "b"}),
+	}
+
+	wantJSON := `{"UnixTime":1574208000,"StrOrSliceSingle":"a","StrOrSliceSlice":["a","b"]}`
+
+	b, err := json.Marshal(&c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != wantJSON {
+		t.Errorf("want %s, got: %s", wantJSON, string(b))
+	}
+
+	gc := container{}
+
+	if err := json.Unmarshal([]byte(wantJSON), &gc); err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(c, gc); diff != "" {
+		t.Error(diff)
+	}
+}
+
+func TestRawJWT(t *testing.T) {
+	// DANGERZONE!! This is a quick hack for testing. Never do it outside of
+	// this context. Is fragile, will need updates when tink changes their
+	// internal state.
+	rawToVerified := func(raw *jwt.RawJWT) *jwt.VerifiedJWT {
+		verifiedJWT := &jwt.VerifiedJWT{}
+		v := reflect.ValueOf(verifiedJWT).Elem()
+		field := v.FieldByName("token")
+		if field.CanSet() {
+			field.Set(reflect.ValueOf(raw))
+		} else {
+			reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(raw))
+		}
+		return verifiedJWT
+	}
+
+	type jwtable interface {
+		ToJWT(extraClaims map[string]any) (*jwt.RawJWT, error)
+	}
+
 	for _, tc := range []struct {
-		Name     string
-		Token    any
-		WantJSON string
+		Name          string
+		IgnoreFields  []string
+		NewFn         func() jwtable
+		FromFn        func(*jwt.RawJWT) (any, error)
+		WantCreateErr bool
+		WantLoadErr   bool
 	}{
 		{
-			Name: "basic",
-			Token: IDClaims{
-				Issuer:   "http://issuer",
-				Audience: StrOrSlice{"aud"},
-				Expiry:   NewUnixTime(mustTime(time.Parse("2006-Jan-02", "2019-Nov-20"))),
-				Extra: map[string]interface{}{
-					"hello": "world",
-				},
+			Name: "ID Token, all filled",
+			NewFn: func() jwtable {
+				return new(IDClaims)
 			},
-			WantJSON: `{
-  "aud": "aud",
-  "exp": 1574208000,
-  "hello": "world",
-  "iss": "http://issuer"
-}`,
+			FromFn: func(raw *jwt.RawJWT) (any, error) {
+				return IDClaimsFromJWT(rawToVerified(raw))
+			},
 		},
 		{
-			Name: "multiple audiences",
-			Token: IDClaims{
-				Audience: StrOrSlice{"aud1", "aud2"},
+			Name: "Access Token, all filled",
+			NewFn: func() jwtable {
+				return new(IDClaims)
 			},
-			WantJSON: `{
-  "aud": [
-    "aud1",
-    "aud2"
-  ]
-}`,
-		},
-		{
-			Name: "extra shouldn't shadow primary fields",
-			Token: IDClaims{
-				Issuer: "http://issuer",
-				Extra: map[string]interface{}{
-					"iss": "http://bad",
-				},
+			FromFn: func(raw *jwt.RawJWT) (any, error) {
+				return IDClaimsFromJWT(rawToVerified(raw))
 			},
-			WantJSON: `{
-  "iss": "http://issuer"
-}`,
-		},
-		{
-			Name: "complex extra",
-			Token: IDClaims{
-				Issuer:   "http://127.0.0.1:62281",
-				Subject:  "CgVmb29pZBIEbW9jaw",
-				Audience: StrOrSlice{"testclient"},
-				Expiry:   1576187854,
-				IssuedAt: 1576187824,
-				AuthTime: 1576187824,
-				Extra: map[string]interface{}{
-					"email":    "foo@bar.com",
-					"groups":   []string{"foo", "bar"},
-					"username": "foo",
-				},
-			},
-			WantJSON: `{
-  "aud": "testclient",
-  "auth_time": 1576187824,
-  "email": "foo@bar.com",
-  "exp": 1576187854,
-  "groups": [
-    "foo",
-    "bar"
-  ],
-  "iat": 1576187824,
-  "iss": "http://127.0.0.1:62281",
-  "sub": "CgVmb29pZBIEbW9jaw",
-  "username": "foo"
-}`,
-		},
-		{
-			Name: "complex access token",
-			Token: AccessTokenClaims{
-				Issuer:   "http://127.0.0.1:62281",
-				Subject:  "CgVmb29pZBIEbW9jaw",
-				Audience: StrOrSlice{"testclient"},
-				Expiry:   1576187854,
-				IssuedAt: 1576187824,
-				JWTID:    "b91d9d40-009d-42ae-afe1-9d323c664950",
-				Extra: map[string]interface{}{
-					"email":    "foo@bar.com",
-					"groups":   []string{"foo", "bar"},
-					"username": "foo",
-				},
-			},
-			WantJSON: `{
-  "aud": "testclient",
-  "email": "foo@bar.com",
-  "exp": 1576187854,
-  "groups": [
-    "foo",
-    "bar"
-  ],
-  "iat": 1576187824,
-  "iss": "http://127.0.0.1:62281",
-  "jti": "b91d9d40-009d-42ae-afe1-9d323c664950",
-  "sub": "CgVmb29pZBIEbW9jaw",
-  "username": "foo"
-}`,
 		},
 	} {
 		t.Run(tc.Name, func(t *testing.T) {
-			jb, err := json.MarshalIndent(tc.Token, "", "  ")
-			if err != nil {
-				t.Fatalf("Unexpected error marshaling JSON: %v", err)
+			idc := tc.NewFn()
+			fillStructWithRandomData(idc, tc.IgnoreFields)
+
+			raw, err := idc.ToJWT(nil)
+			if (err != nil) != tc.WantCreateErr {
+				t.Fatalf("want to err: %t, got: %v", tc.WantLoadErr, err)
 			}
 
-			if diff := cmp.Diff(tc.WantJSON, string(jb)); diff != "" {
+			got, err := tc.FromFn(raw)
+			if (err != nil) != tc.WantLoadErr {
+				t.Fatalf("want load err: %t, got: %v", tc.WantLoadErr, err)
+			}
+
+			if diff := cmp.Diff(idc, got, cmpopts.IgnoreUnexported(IDClaims{})); diff != "" {
 				t.Error(diff)
 			}
 		})
 	}
 }
 
-func TestIDTokenUnmarshaling(t *testing.T) {
-	for _, tc := range []struct {
-		Name      string
-		JSON      string
-		WantToken IDClaims
+func TestPTROrNil(t *testing.T) {
+	tester := struct {
+		ZeroS   string
+		ZeroI   int
+		FilledS string
+		FilledI int
 	}{
-		{
-			Name: "basic",
-			JSON: `{
-  "aud": "aud",
-  "exp": 1574208000,
-  "hello": "world",
-  "iss": "http://issuer"
-}`,
-			WantToken: IDClaims{
-				Issuer:   "http://issuer",
-				Audience: StrOrSlice{"aud"},
-				Expiry:   NewUnixTime(mustTime(time.Parse("2006-Jan-02", "2019-Nov-20"))),
-				Extra: map[string]interface{}{
-					"hello": "world",
-				},
-			},
-		},
-		{
-			Name: "Multiple audiences",
-			JSON: `{
-  "aud": ["aud1", "aud2"]
-}`,
-			WantToken: IDClaims{
-				Audience: StrOrSlice{"aud1", "aud2"},
-			},
-		},
-		{
-			Name: "scientific notation",
-			JSON: `{
-  "aud": "aud",
-  "exp": 1.601386279e+09,
-  "hello": "world",
-  "iss": "http://issuer"
-}`,
-			WantToken: IDClaims{
-				Issuer:   "http://issuer",
-				Audience: StrOrSlice{"aud"},
-				Expiry:   1601386279,
-				Extra: map[string]interface{}{
-					"hello": "world",
-				},
-			},
-		},
-	} {
-		t.Run(tc.Name, func(t *testing.T) {
-			tok := IDClaims{}
-			if err := json.Unmarshal([]byte(tc.JSON), &tok); err != nil {
-				t.Fatalf("Unexpected error unmarshaling JSON: %v", err)
-			}
+		FilledS: "hello",
+		FilledI: 42,
+	}
 
-			if diff := cmp.Diff(tc.WantToken, tok, cmpopts.IgnoreUnexported(IDClaims{})); diff != "" {
-				t.Error(diff)
-			}
-		})
+	if v := ptrOrNil(tester.ZeroS); v != nil {
+		t.Error("empty val should be nil")
+	}
+	if v := ptrOrNil(tester.ZeroI); v != nil {
+		t.Error("empty val should be nil")
+	}
+
+	if v := ptrOrNil(tester.FilledS); v == nil || *v != tester.FilledS {
+		t.Error("val should not be nil, and should match original")
+	}
+	if v := ptrOrNil(tester.FilledI); v == nil || *v != tester.FilledI {
+		t.Error("val should not be nil, and should match original")
 	}
 }
 
-func mustTime(t time.Time, err error) time.Time {
+func must[T any](v T, err error) T {
 	if err != nil {
 		panic(err)
 	}
-	return t
+	return v
+}
+
+func fillStructWithRandomData(v any, ignoreClaims []string) {
+	val := reflect.ValueOf(v).Elem()
+	typeOfV := val.Type()
+
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+
+		jsonTag := typeOfV.Field(i).Tag.Get("json")
+
+		if slices.Contains(ignoreClaims, jsonTag) {
+			continue
+		}
+
+		switch field.Kind() {
+		case reflect.String:
+			field.SetString(randomString(5))
+		case reflect.Slice:
+			if field.Type().Elem().Kind() == reflect.String {
+				field.Set(reflect.ValueOf(randomStringSlice(3)))
+			}
+		case reflect.Int64:
+			if field.Type() == reflect.TypeOf(UnixTime(0)) {
+				field.Set(reflect.ValueOf(randomUnixTime()))
+			}
+		case reflect.Map:
+			if field.Type().Key().Kind() == reflect.String && field.Type().Elem().Kind() == reflect.String {
+				field.Set(reflect.ValueOf(randomStringMap(3)))
+			}
+		default:
+			panic(fmt.Sprintf("unknown type %s", field.Type()))
+		}
+	}
+}
+
+func randomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyz"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.IntN(len(charset))]
+	}
+	return string(b)
+}
+
+func randomStringSlice(size int) []string {
+	slice := make([]string, size)
+	for i := 0; i < size; i++ {
+		slice[i] = randomString(3)
+	}
+	return slice
+}
+
+func randomUnixTime() UnixTime {
+	offset := rand.IntN(60 * 24 * 30)
+	if rand.IntN(2) == 0 {
+		offset = -offset // Negate for a past time
+	}
+	return UnixTime(time.Now().Add(time.Duration(offset) * time.Minute).Unix())
+}
+
+func randomStringMap(size int) map[string]string {
+	m := make(map[string]string)
+	for i := 0; i < size; i++ {
+		key := randomString(5)
+		value := randomString(10)
+		m[key] = value
+	}
+	return m
 }

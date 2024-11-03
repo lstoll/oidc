@@ -10,6 +10,7 @@ import (
 
 	"github.com/lstoll/oidc"
 	"github.com/lstoll/oidc/internal"
+	"github.com/tink-crypto/tink-go/v2/jwt"
 	"golang.org/x/oauth2"
 )
 
@@ -74,9 +75,6 @@ type Handler struct {
 	// requests. It needs to be able to store ID and refresh tokens, plus a
 	// small amount of additional data. Required.
 	SessionStore SessionStore
-	// VerificationOptions are used when verifying tokens presented to this
-	// application.
-	VerificationOptions oidc.VerificationOpts
 	// BaseURL sets the base URL for this app, users will be redirect on login
 	// here if the return to URL was not tracked or login was triggered from a
 	// non-GET method request.
@@ -126,7 +124,7 @@ func (h *Handler) Wrap(next http.Handler) http.Handler {
 		}
 
 		// Check for a user that's already authenticated
-		tok, claims := h.authenticateExisting(r, session)
+		tok, jwt, claims := h.authenticateExisting(r, session)
 		if tok != nil {
 			if err := h.SessionStore.SaveOIDCSession(w, r, session); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -136,6 +134,7 @@ func (h *Handler) Wrap(next http.Handler) http.Handler {
 			// Authentication successful
 			r = r.WithContext(context.WithValue(r.Context(), tokenContextKey{}, contextData{
 				token:  tok,
+				jwt:    jwt,
 				claims: claims,
 			}))
 			next.ServeHTTP(w, r)
@@ -175,28 +174,28 @@ func (h *Handler) Wrap(next http.Handler) http.Handler {
 //
 // This function may modify the session if a token is refreshed, so it must be
 // saved afterward.
-func (h *Handler) authenticateExisting(r *http.Request, session *SessionData) (*oauth2.Token, *oidc.IDClaims) {
+func (h *Handler) authenticateExisting(r *http.Request, session *SessionData) (*oauth2.Token, *jwt.VerifiedJWT, *oidc.IDClaims) {
 	ctx := r.Context()
 
 	if session.Token == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// we always verify, as in the cookie store case the integrity of the data
 	// is not trusted.
-	claims, err := h.Provider.VerifyIDToken(ctx, session.Token.Token, h.verificationOptions())
+	jwt, claims, err := h.Provider.VerifyIDToken(ctx, session.Token.Token, oidc.IDTokenValidationOpts{Audience: h.OAuth2Config.ClientID})
 	if err != nil {
 		// Attempt to refresh the token
 		if session.Token.RefreshToken == "" {
-			return nil, nil
+			return nil, nil, nil
 		}
 		token, err := h.OAuth2Config.TokenSource(ctx, session.Token.Token).Token()
 		if err != nil {
-			return nil, nil
+			return nil, nil, nil
 		}
-		_, err = h.Provider.VerifyIDToken(ctx, token, h.verificationOptions())
+		jwt, claims, err = h.Provider.VerifyIDToken(ctx, token, oidc.IDTokenValidationOpts{Audience: h.OAuth2Config.ClientID})
 		if err != nil {
-			return nil, nil
+			return nil, nil, nil
 		}
 	}
 
@@ -206,7 +205,7 @@ func (h *Handler) authenticateExisting(r *http.Request, session *SessionData) (*
 	// we would have done the job of refreshing if needed.
 	retTok := *session.Token.Token
 	retTok.RefreshToken = ""
-	return &retTok, claims
+	return &retTok, jwt, claims
 }
 
 // authenticateCallback returns (returnTo, nil) if the user is authenticated,
@@ -260,7 +259,7 @@ func (h *Handler) authenticateCallback(r *http.Request, session *SessionData) (s
 
 	// TODO(lstoll) do we want to verify the ID token here? was retrieved from a
 	// trusted source....
-	_, err = h.Provider.VerifyIDToken(ctx, token, h.verificationOptions())
+	_, _, err = h.Provider.VerifyIDToken(ctx, token, oidc.IDTokenValidationOpts{Audience: h.OAuth2Config.ClientID})
 	if err != nil {
 		return "", fmt.Errorf("verifying id_token failed: %w", err)
 	}
@@ -310,23 +309,14 @@ func (h *Handler) startAuthentication(r *http.Request, session *SessionData) str
 	return h.OAuth2Config.AuthCodeURL(state, opts...)
 }
 
-func (h *Handler) verificationOptions() oidc.VerificationOpts {
-	opts := h.VerificationOptions
-	// unless it's been provided or explicitly opted out of, default to the
-	// oauth2 client ID.
-	if h.VerificationOptions.ClientID == "" && !h.VerificationOptions.IgnoreClientID {
-		opts.ClientID = h.OAuth2Config.ClientID
-	}
-	return opts
-}
-
 type contextData struct {
 	token  *oauth2.Token
+	jwt    *jwt.VerifiedJWT
 	claims *oidc.IDClaims
 }
 
-// ClaimsFromContext returns the claims for the given request context
-func ClaimsFromContext(ctx context.Context) *oidc.IDClaims {
+// IDClaimsFromContext returns the OIDC ID claims for the given request context
+func IDClaimsFromContext(ctx context.Context) *oidc.IDClaims {
 	cd, ok := ctx.Value(tokenContextKey{}).(contextData)
 	if !ok {
 		return nil
@@ -334,6 +324,26 @@ func ClaimsFromContext(ctx context.Context) *oidc.IDClaims {
 
 	return cd.claims
 }
+
+// IDJWTFromContext returns the validated OIDC ID JWT from the given request
+// context.
+func IDJWTFromContext(ctx context.Context) *jwt.VerifiedJWT {
+	cd, ok := ctx.Value(tokenContextKey{}).(contextData)
+	if !ok {
+		return nil
+	}
+
+	return cd.jwt
+}
+
+/* TODO re-asses the usage of these once updating the consumer of this library.
+ * e.g the ID vs access token split, how that works with the ID token source
+ * in the root package etc. For now, ignore them. But there's likely use
+ * for auth to external systems.
+ *
+ * For the token source, might be worth considering how we could manage
+ * refreshing from it. Could maybe stash a pointer, and capture and update
+ * the session after the wrapped request is called?
 
 // RawIDTokenFromContext returns the raw JWT from the given request context
 func RawIDTokenFromContext(ctx context.Context) string {
@@ -360,3 +370,4 @@ func TokenSourceFromContext(ctx context.Context) oauth2.TokenSource {
 
 	return oauth2.StaticTokenSource(cd.token)
 }
+*/

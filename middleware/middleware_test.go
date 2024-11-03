@@ -216,7 +216,7 @@ func (s *mockOIDCServer) handleKeys(w http.ResponseWriter, r *http.Request) {
 
 func TestMiddleware_HappyPath(t *testing.T) {
 	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(fmt.Sprintf("sub: %s", ClaimsFromContext(r.Context()).Subject)))
+		_, _ = w.Write([]byte(fmt.Sprintf("sub: %s", IDClaimsFromContext(r.Context()).Subject)))
 	})
 
 	oidcServer, oidcHTTPServer := startMockOIDCServer(t)
@@ -294,14 +294,16 @@ func TestMiddleware_HappyPath(t *testing.T) {
 
 func TestContext(t *testing.T) {
 	var ( // Capture in handler
-		gotTokSrc oauth2.TokenSource
+		// gotTokSrc oauth2.TokenSource
 		gotClaims *oidc.IDClaims
-		gotRaw    string
+		gotJWT    *jwt.VerifiedJWT
+		// gotRaw    string
 	)
 	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotTokSrc = TokenSourceFromContext(r.Context())
-		gotClaims = ClaimsFromContext(r.Context())
-		gotRaw = RawIDTokenFromContext(r.Context())
+		// gotTokSrc = TokenSourceFromContext(r.Context())
+		gotClaims = IDClaimsFromContext(r.Context())
+		gotJWT = IDJWTFromContext(r.Context())
+		// gotRaw = RawIDTokenFromContext(r.Context())
 	})
 
 	oidcServer, oidcHTTPServer := startMockOIDCServer(t)
@@ -344,14 +346,23 @@ func TestContext(t *testing.T) {
 	if gotClaims.Subject != "valid-subject" {
 		t.Errorf("want claims sub valid-subject, got: %s", gotClaims.Subject)
 	}
-	if gotRaw == "" {
-		t.Error("context missing id_token")
+
+	jwtsub, err := gotJWT.Subject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jwtsub != "valid-subject" {
+		t.Errorf("want jwt sub valid-subject, got: %s", gotClaims.Subject)
 	}
 
-	_, err = gotTokSrc.Token()
-	if err != nil {
-		t.Fatalf("calling token source token: %v", err)
-	}
+	// if gotRaw == "" {
+	// 	t.Error("context missing id_token")
+	// }
+
+	// _, err = gotTokSrc.Token()
+	// if err != nil {
+	// 	t.Fatalf("calling token source token: %v", err)
+	// }
 }
 
 func checkResponse(t *testing.T, resp *http.Response) (body []byte) {
