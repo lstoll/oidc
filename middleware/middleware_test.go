@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,40 +37,14 @@ type mockOIDCServer struct {
 	mux *http.ServeMux
 }
 
-func startServer(t *testing.T, handler http.Handler) (baseURL string, cleanup func()) {
-	t.Helper()
-
-	l, err := net.Listen("tcp", "localhost:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, port, err := net.SplitHostPort(l.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	baseURL = fmt.Sprintf("http://localhost:%s", port)
-	server := &http.Server{
-		Handler: handler,
-	}
-
-	go func() { _ = server.Serve(l) }()
-
-	return baseURL, func() {
-		_ = server.Shutdown(context.Background())
-		_ = l.Close()
-	}
-}
-
-func startMockOIDCServer(t *testing.T) (server *mockOIDCServer, cleanup func()) {
-	t.Helper()
-
+func startMockOIDCServer(t *testing.T) (server *mockOIDCServer, httpServer *httptest.Server) {
 	server = newMockOIDCServer()
-	baseURL, cleanup := startServer(t, server)
-	server.baseURL = baseURL
+	httpServer = httptest.NewTLSServer(server)
+	t.Cleanup(httpServer.Close)
 
-	return server, cleanup
+	server.baseURL = httpServer.URL
+
+	return server, httpServer
 }
 
 func newMockOIDCServer() *mockOIDCServer {
@@ -244,47 +219,76 @@ func TestMiddleware_HappyPath(t *testing.T) {
 		_, _ = w.Write([]byte(fmt.Sprintf("sub: %s", ClaimsFromContext(r.Context()).Subject)))
 	})
 
-	oidcServer, cleanupOIDCServer := startMockOIDCServer(t)
-	defer cleanupOIDCServer()
+	oidcServer, oidcHTTPServer := startMockOIDCServer(t)
+
+	httpServer := httptest.NewTLSServer(nil)
+	t.Cleanup(httpServer.Close)
 
 	oidcServer.validClientID = "valid-client-id"
 	oidcServer.validClientSecret = "valid-client-secret"
+	oidcServer.validRedirectURL = fmt.Sprintf("%s/callback", httpServer.URL)
+	oidcServer.claims = map[string]interface{}{"sub": "valid-subject"}
 
-	store, err := NewMemorySessionStore(http.Cookie{Name: "oidc-login", Path: "/"})
+	discoveryOpts = &oidc.DiscoverOptions{
+		HTTPClient: oidcHTTPServer.Client(),
+	}
+
+	handler, err := NewFromDiscovery(context.TODO(), nil, oidcServer.baseURL, oidcServer.validClientID, oidcServer.validClientSecret, oidcServer.validRedirectURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	handler := &Handler{
-		Issuer:       oidcServer.baseURL,
-		ClientID:     oidcServer.validClientID,
-		ClientSecret: oidcServer.validClientSecret,
-		SessionStore: store,
-	}
+	httpServer.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// TODO - do we want a better way to do this, or should this basically
+		// be the solution? It's the oauth2 client way I guess...
+		r = r.WithContext(context.WithValue(r.Context(), oauth2.HTTPClient, oidcHTTPServer.Client()))
+		handler.Wrap(protected).ServeHTTP(w, r)
+	})
 
-	baseURL, cleanupServer := startServer(t, handler.Wrap(protected))
-	defer cleanupServer()
-
-	handler.BaseURL = baseURL
-
-	oidcServer.validRedirectURL = fmt.Sprintf("%s/callback", baseURL)
-	oidcServer.claims = map[string]interface{}{"sub": "valid-subject"}
-	handler.RedirectURL = oidcServer.validRedirectURL
+	// handler.BaseURL = httpServer.URL
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{Jar: jar}
+	client := httpServer.Client()
+	client.Jar = jar
 
-	resp, err := client.Get(baseURL)
-	if err != nil {
-		t.Fatal(err)
+	// we run a bunch of concurrent iterations, to make sure that state mismatch
+	// etc. doesn't happen
+	var (
+		flowIters = 10
+		wg        sync.WaitGroup
+		respC     = make(chan *http.Response, flowIters)
+		errC      = make(chan error, flowIters)
+	)
+	for i := 1; i <= flowIters; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			resp, err := client.Get(httpServer.URL)
+			if err != nil {
+				errC <- err
+			}
+			respC <- resp
+		}()
 	}
+	wg.Wait()
+	close(errC)
+	close(respC)
 
-	body := checkResponse(t, resp)
-	if !bytes.Equal([]byte("sub: valid-subject"), body) {
-		t.Fatalf("wanted body %s, got %s", "sub: valid-subject", string(body))
+	for err := range errC {
+		t.Errorf("error in request: %v", err)
+	}
+	if len(respC) == 0 {
+		t.Fatal("no responses on channel")
+	}
+	for resp := range respC {
+		body := checkResponse(t, resp)
+		if !bytes.Equal([]byte("sub: valid-subject"), body) {
+			t.Errorf("wanted body %s, got %s", "sub: valid-subject", string(body))
+		}
 	}
 }
 
@@ -300,40 +304,40 @@ func TestContext(t *testing.T) {
 		gotRaw = RawIDTokenFromContext(r.Context())
 	})
 
-	oidcServer, cleanupOIDCServer := startMockOIDCServer(t)
-	defer cleanupOIDCServer()
+	oidcServer, oidcHTTPServer := startMockOIDCServer(t)
+
+	httpServer := httptest.NewTLSServer(nil)
+	t.Cleanup(httpServer.Close)
 
 	oidcServer.validClientID = "valid-client-id"
 	oidcServer.validClientSecret = "valid-client-secret"
+	oidcServer.validRedirectURL = fmt.Sprintf("%s/callback", httpServer.URL)
+	oidcServer.claims = map[string]interface{}{"sub": "valid-subject"}
 
-	store, err := NewMemorySessionStore(http.Cookie{Name: "oidc-login", Path: "/"})
+	discoveryOpts = &oidc.DiscoverOptions{
+		HTTPClient: oidcHTTPServer.Client(),
+	}
+
+	handler, err := NewFromDiscovery(context.TODO(), nil, oidcServer.baseURL, oidcServer.validClientID, oidcServer.validClientSecret, oidcServer.validRedirectURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	handler := &Handler{
-		Issuer:       oidcServer.baseURL,
-		ClientID:     oidcServer.validClientID,
-		ClientSecret: oidcServer.validClientSecret,
-		SessionStore: store,
-	}
-
-	baseURL, cleanupServer := startServer(t, handler.Wrap(protected))
-	defer cleanupServer()
-
-	handler.BaseURL = baseURL
-
-	oidcServer.validRedirectURL = fmt.Sprintf("%s/callback", baseURL)
-	oidcServer.claims = map[string]interface{}{"sub": "valid-subject"}
-	handler.RedirectURL = oidcServer.validRedirectURL
+	httpServer.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// TODO - do we want a better way to do this, or should this basically
+		// be the solution? It's the oauth2 client way I guess...
+		r = r.WithContext(context.WithValue(r.Context(), oauth2.HTTPClient, oidcHTTPServer.Client()))
+		handler.Wrap(protected).ServeHTTP(w, r)
+	})
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{Jar: jar}
+	client := httpServer.Client()
+	client.Jar = jar
 
-	if _, err = client.Get(baseURL); err != nil {
+	if _, err = client.Get(httpServer.URL); err != nil {
 		t.Fatal(err)
 	}
 
