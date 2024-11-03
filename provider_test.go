@@ -245,6 +245,23 @@ func TestAccessTokenVerification(t *testing.T) {
 	}
 }
 
+func TestRefetch(t *testing.T) {
+	svr, _ := newMockDiscoveryServer(t)
+
+	provider, err := DiscoverProvider(context.TODO(), svr.URL, &DiscoverOptions{
+		HTTPClient: svr.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider.lastHandle = nil
+
+	if _, err := provider.PublicHandle(context.TODO()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAccessTokenHeaderRequiredVerification(t *testing.T) {
 	svr, h := newMockDiscoveryServer(t)
 

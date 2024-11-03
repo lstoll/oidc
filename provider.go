@@ -129,41 +129,59 @@ func (p *Provider) PublicHandle(ctx context.Context) (*keyset.Handle, error) {
 	defer p.cacheMu.Unlock()
 
 	if p.lastHandle == nil || time.Now().After(p.lastHandleFetched.Add(cacheFor)) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Metadata.JWKSURI, nil)
-		if err != nil {
-			return nil, fmt.Errorf("creating request for %s: %w", p.Metadata.JWKSURI, err)
+		if err := p.FetchKeys(ctx); err != nil {
+			return nil, err
 		}
-		req = req.WithContext(ctx)
-		res, err := p.getHTTPClient().Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get keys from %s: %v", p.Metadata.JWKSURI, err)
-		}
-		if res.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("expected status %d, got: %d", http.StatusOK, res.StatusCode)
-		}
-		jwksb, err := io.ReadAll(res.Body)
-		if err != nil {
-			return nil, fmt.Errorf("reading JWKS body: %w", err)
-		}
-
-		h, err := jwt.JWKSetToPublicKeysetHandle(jwksb)
-		if err != nil {
-			return nil, fmt.Errorf("creating handle from response: %w", err)
-		}
-
-		p.lastHandle = h
 	}
 
 	return p.lastHandle, nil
 }
 
+// FetchKeys retrieve the current signing keyset from the discovered jwks URL,
+// and updates the cache on the provider. This can be used in a background
+// routine to ensure the cache is always up-to-date, and avoid the verification
+// methods potentially having to wait on a fetch. It can also be used to
+// implement revocation.
+func (p *Provider) FetchKeys(ctx context.Context) error {
+	if p.OverrideHandle != nil {
+		return fmt.Errorf("cannot fetch keys when handle is overriden")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Metadata.JWKSURI, nil)
+	if err != nil {
+		return fmt.Errorf("creating request for %s: %w", p.Metadata.JWKSURI, err)
+	}
+	req = req.WithContext(ctx)
+	res, err := p.getHTTPClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to get keys from %s: %v", p.Metadata.JWKSURI, err)
+	}
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("expected status %d, got: %d", http.StatusOK, res.StatusCode)
+	}
+	jwksb, err := io.ReadAll(res.Body)
+	if err != nil {
+		return fmt.Errorf("reading JWKS body: %w", err)
+	}
+
+	h, err := jwt.JWKSetToPublicKeysetHandle(jwksb)
+	if err != nil {
+		return fmt.Errorf("creating handle from response: %w", err)
+	}
+
+	p.lastHandle = h
+	p.lastHandleFetched = time.Now()
+
+	return nil
+}
+
 // VerifyToken is a low-level function that verifies the raw JWT against the
 // keyset for this provider. In most cases, one of the higher level ID
-// token/access token methods should be used. If the keys need to be refreshed
-// they will using the provided context, if that fails we will try anyway with
-// the current keyset. It will return the verified JWT contents. This can be
-// used against a JWT issued by this provider for any purpose. The validator
-// opts should be provided to verify the audience/client ID and other required
+// token/access token methods should be used. This will always try and use the
+// cached keyset, only falling back to a refresh if validation with the current
+// keys fails.. It will return the verified JWT contents. This can be used
+// against a JWT issued by this provider for any purpose. The validator opts
+// should be provided to verify the audience/client ID and other required
 // fields. Opts can be used to pass validation opts for the token, the issuer
 // will always be set to the issuer for this provider and cannot be ignored.
 func (p *Provider) VerifyToken(ctx context.Context, rawJWT string, opts *jwt.ValidatorOpts) (*jwt.VerifiedJWT, error) {
@@ -190,7 +208,7 @@ func (p *Provider) VerifyToken(ctx context.Context, rawJWT string, opts *jwt.Val
 	}
 
 	// we don't have a cached handle, or the token did not validate with it. Run
-	// through the normal fetch option.
+	// through the normal fetch option, to refresh if we're due.
 	h, err := p.PublicHandle(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting handle: %w", err)
