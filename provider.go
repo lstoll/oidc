@@ -144,7 +144,7 @@ func (p *Provider) PublicHandle(ctx context.Context) (*keyset.Handle, error) {
 // implement revocation.
 func (p *Provider) FetchKeys(ctx context.Context) error {
 	if p.OverrideHandle != nil {
-		return fmt.Errorf("cannot fetch keys when handle is overriden")
+		return fmt.Errorf("cannot fetch keys when handle is overridden")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Metadata.JWKSURI, nil)
