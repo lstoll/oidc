@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -12,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/lstoll/oidc"
+	"github.com/lstoll/oidc/internal"
 	"golang.org/x/oauth2"
 )
 
@@ -57,7 +56,7 @@ func (s *server) home(w http.ResponseWriter, req *http.Request) {
 // start the actual flow. this builds up the request and sends the user on
 func (s *server) start(w http.ResponseWriter, req *http.Request) {
 	// track a random state var to prevent CSRF
-	state := mustRandStr(16)
+	state := internal.RandText()
 	sc := &http.Cookie{
 		Name:   stateCookie,
 		Value:  state,
@@ -180,12 +179,4 @@ func (s *server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	})
 
 	s.mux.ServeHTTP(w, req)
-}
-
-func mustRandStr(len int) string {
-	b := make([]byte, len)
-	if r, err := rand.Read(b); err != nil || r != len {
-		panic("error or underread from rand.Read")
-	}
-	return base64.RawURLEncoding.EncodeToString(b)
 }
