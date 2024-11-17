@@ -439,6 +439,9 @@ func (a *AccessTokenClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, erro
 	if a.Scope != "" {
 		opts.CustomClaims["scope"] = a.Scope
 	}
+	if a.ClientID != "" {
+		opts.CustomClaims["client_id"] = a.ClientID
+	}
 	if a.AuthTime != 0 {
 		opts.CustomClaims["auth_time"] = int(a.AuthTime)
 	}
@@ -549,6 +552,13 @@ func AccessTokenClaimsFromJWT(verified *jwt.VerifiedJWT) (*AccessTokenClaims, er
 		}
 		c.Scope = v
 	}
+	if verified.HasStringClaim("client_id") {
+		v, err := verified.StringClaim("client_id")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.ClientID = v
+	}
 	if verified.HasArrayClaim("groups") {
 		v, err := verified.ArrayClaim("groups")
 		if err != nil {
@@ -569,7 +579,7 @@ func AccessTokenClaimsFromJWT(verified *jwt.VerifiedJWT) (*AccessTokenClaims, er
 		if err != nil {
 			errs = errors.Join(errs, err)
 		}
-		c.Groups = sv
+		c.Roles = sv
 	}
 	if verified.HasArrayClaim("entitlements") {
 		v, err := verified.ArrayClaim("entitlements")
@@ -580,7 +590,7 @@ func AccessTokenClaimsFromJWT(verified *jwt.VerifiedJWT) (*AccessTokenClaims, er
 		if err != nil {
 			errs = errors.Join(errs, err)
 		}
-		c.Groups = sv
+		c.Entitlements = sv
 	}
 	if errs != nil {
 		return nil, errs

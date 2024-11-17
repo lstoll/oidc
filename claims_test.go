@@ -89,10 +89,10 @@ func TestRawJWT(t *testing.T) {
 		{
 			Name: "Access Token, all filled",
 			NewFn: func() jwtable {
-				return new(IDClaims)
+				return new(AccessTokenClaims)
 			},
 			FromFn: func(raw *jwt.RawJWT) (any, error) {
-				return IDClaimsFromJWT(rawToVerified(raw))
+				return AccessTokenClaimsFromJWT(rawToVerified(raw))
 			},
 		},
 	} {

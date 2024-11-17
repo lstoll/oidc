@@ -23,6 +23,9 @@ const (
 	// ScopeAddress requests access to the address claim.
 	// https://openid.net/specs/openid-connect-core-1_0.html#ScopeClaims
 	ScopeAddress = "address"
+	// ScopeOfflineAccess requests offline access, i.e issue a refresh token.
+	// https://openid.net/specs/openid-connect-core-1_0.html#OfflineAccess
+	ScopeOfflineAccess = "offline_access"
 )
 
 func SetACRValues(acrValues []string) oauth2.AuthCodeOption {
