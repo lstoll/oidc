@@ -209,7 +209,7 @@ func raw(ts oauth2.TokenSource, opts rawOpts) error {
 	}
 	var raw string = tok.AccessToken
 	if opts.UseIDToken {
-		idt, ok := oidc.IDToken(tok)
+		idt, ok := oidc.GetIDToken(tok)
 		if !ok {
 			return fmt.Errorf("response has no id_token")
 		}
@@ -244,7 +244,7 @@ func kubernetes(ts oauth2.TokenSource, opts kubeOpts) error {
 	}
 	var raw = tok.AccessToken
 	if opts.UseIDToken {
-		idt, ok := oidc.IDToken(tok)
+		idt, ok := oidc.GetIDToken(tok)
 		if !ok {
 			return fmt.Errorf("response has no id_token")
 		}
@@ -283,7 +283,7 @@ func info(ctx context.Context, provider *oidc.Provider, ts oauth2.TokenSource, _
 		fmt.Printf("Access token full claims: %v\n", string(jb))
 	}
 	fmt.Printf("Refresh Token: %s\n", tok.RefreshToken)
-	idt, ok := oidc.IDToken(tok)
+	idt, ok := oidc.GetIDToken(tok)
 	if ok {
 		jwt, claims, err := provider.VerifyIDToken(ctx, tok, oidc.IDTokenValidationOpts{IgnoreAudience: true})
 		if err != nil {

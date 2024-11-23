@@ -165,7 +165,7 @@ func TestIDTokenVerification(t *testing.T) {
 			}
 			signed := signRawJWT(t, h, jwt)
 
-			o2t := TokenWithID(&oauth2.Token{}, signed)
+			o2t := AddIDToken(&oauth2.Token{}, signed)
 
 			_, gotc, err := provider.VerifyIDToken(context.TODO(), o2t, tc.VerifOpts)
 			if (err != nil && tc.WantErrStr == "") || (err == nil && tc.WantErrStr != "") || (err != nil && !strings.Contains(err.Error(), tc.WantErrStr)) {

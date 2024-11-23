@@ -130,7 +130,7 @@ func (s *server) callback(w http.ResponseWriter, req *http.Request) {
 		"access_token": token.AccessToken,
 	}
 
-	idt, hasIDToken := oidc.IDToken(token)
+	idt, hasIDToken := oidc.GetIDToken(token)
 	if hasIDToken {
 		jwt, _, err := s.provider.VerifyIDToken(req.Context(), token, oidc.IDTokenValidationOpts{
 			Audience: string(s.oa2Cfg.ClientID),
