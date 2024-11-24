@@ -172,12 +172,21 @@ func main() {
 	}
 
 	if !baseFlags.SkipCache {
-		var tsOpts []tokencache.TokenSourceOpt
+		ccfg := tokencache.Config{
+			Issuer:        baseFlags.Issuer,
+			CacheKey:      (tokencache.IDTokenCacheKey{}).Key(),
+			WrappedSource: ts,
+			Cache:         clitoken.BestCredentialCache(),
+		}
 		if baseFlags.Offline {
-			tsOpts = append(tsOpts, tokencache.WithRefreshConfig(ctx, oa2Cfg))
+			ccfg.OAuth2Config = &oa2Cfg
 		}
 
-		ts = tokencache.TokenSource(ts, baseFlags.Issuer, baseFlags.ClientID, tsOpts...)
+		ts, err = ccfg.TokenSource(ctx)
+		if err != nil {
+			fmt.Printf("error creating token cache: %+v", err)
+			os.Exit(1)
+		}
 	}
 
 	if err := execFn(ctx, provider, ts); err != nil {
