@@ -1,4 +1,4 @@
-package tokencache
+package clitoken
 
 import (
 	"os"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/lstoll/oidc/tokencache"
 	"golang.org/x/oauth2"
 )
 
@@ -46,74 +47,48 @@ func TestMemoryWriteThroughCredentialCache(t *testing.T) {
 	testCache(t, cache)
 }
 
-func testCache(t *testing.T, cache CredentialCache) {
+func testCache(t *testing.T, cache tokencache.CredentialCache) {
 	for _, tc := range []struct {
 		name string
-		run  func(cache CredentialCache) (*oauth2.Token, error)
+		run  func(cache tokencache.CredentialCache) (*oauth2.Token, error)
 		want *oauth2.Token
 	}{
 		{
 			name: "happy path",
-			run: func(cache CredentialCache) (*oauth2.Token, error) {
+			run: func(cache tokencache.CredentialCache) (*oauth2.Token, error) {
 				token := (&oauth2.Token{AccessToken: "abc123"}).WithExtra(map[string]any{"id_token": "zyx987"})
 
-				if err := cache.Set("https://issuer1.test", "clientID", []string{"openid"}, []string{"acr1"}, token); err != nil {
+				if err := cache.Set("https://issuer1.test", "clientID", token); err != nil {
 					return nil, err
 				}
 
-				return cache.Get("https://issuer1.test", "clientID", []string{"openid"}, []string{"acr1"})
+				return cache.Get("https://issuer1.test", "clientID")
 			},
 			want: (&oauth2.Token{AccessToken: "abc123"}).WithExtra(map[string]any{"id_token": "zyx987"}),
 		},
 		{
 			name: "cache miss by issuer",
-			run: func(cache CredentialCache) (*oauth2.Token, error) {
+			run: func(cache tokencache.CredentialCache) (*oauth2.Token, error) {
 				token := (&oauth2.Token{AccessToken: "abc123"}).WithExtra(map[string]any{"id_token": "zyx987"})
 
-				if err := cache.Set("https://issuer2.test", "clientID", []string{"openid"}, []string{"acr1"}, token); err != nil {
+				if err := cache.Set("https://issuer2.test", "clientID", token); err != nil {
 					return nil, err
 				}
 
-				return cache.Get("https://issuer3.test", "clientID", []string{"openid"}, []string{"acr1"})
+				return cache.Get("https://issuer3.test", "clientID")
 			},
 			want: nil,
 		},
 		{
-			name: "cache miss by client ID",
-			run: func(cache CredentialCache) (*oauth2.Token, error) {
+			name: "cache miss by key",
+			run: func(cache tokencache.CredentialCache) (*oauth2.Token, error) {
 				token := (&oauth2.Token{AccessToken: "abc123"}).WithExtra(map[string]any{"id_token": "zyx987"})
 
-				if err := cache.Set("https://issuer4.test", "clientID1", []string{"openid"}, []string{"acr1"}, token); err != nil {
+				if err := cache.Set("https://issuer4.test", "clientID1", token); err != nil {
 					return nil, err
 				}
 
-				return cache.Get("https://issuer4.test", "clientID2", []string{"openid"}, []string{"acr1"})
-			},
-			want: nil,
-		},
-		{
-			name: "cache miss by scopes",
-			run: func(cache CredentialCache) (*oauth2.Token, error) {
-				token := (&oauth2.Token{AccessToken: "abc123"}).WithExtra(map[string]any{"id_token": "zyx987"})
-
-				if err := cache.Set("https://issuer5.test", "clientID", []string{"openid"}, []string{"acr1"}, token); err != nil {
-					return nil, err
-				}
-
-				return cache.Get("https://issuer5.test", "clientID", []string{"openid", "groups"}, []string{"acr1"})
-			},
-			want: nil,
-		},
-		{
-			name: "cache miss by ACR",
-			run: func(cache CredentialCache) (*oauth2.Token, error) {
-				token := (&oauth2.Token{AccessToken: "abc123"}).WithExtra(map[string]any{"id_token": "zyx987"})
-
-				if err := cache.Set("https://issuer5.test", "clientID", []string{"openid"}, []string{"acr1"}, token); err != nil {
-					return nil, err
-				}
-
-				return cache.Get("https://issuer5.test", "clientID", []string{"openid"}, []string{"acr2"})
+				return cache.Get("https://issuer4.test", "clientID2")
 			},
 			want: nil,
 		},
