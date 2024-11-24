@@ -78,7 +78,7 @@ func (k *KeychainCredentialCache) Get(issuer string, clientID string, scopes []s
 		return nil, fmt.Errorf("%s: %w", string(out), err)
 	}
 
-	var token oidc.MarshaledToken
+	var token oidc.TokenWithID
 	if err := json.Unmarshal(out, &token); err != nil {
 		return nil, fmt.Errorf("failed to decode token: %w", err)
 	}
@@ -87,7 +87,7 @@ func (k *KeychainCredentialCache) Get(issuer string, clientID string, scopes []s
 }
 
 func (k *KeychainCredentialCache) Set(issuer string, clientID string, scopes []string, acrValues []string, token *oauth2.Token) error {
-	b, err := json.Marshal(oidc.MarshaledToken{Token: token})
+	b, err := json.Marshal(oidc.TokenWithID{Token: token})
 	if err != nil {
 		return fmt.Errorf("failed to encode token: %w", err)
 	}

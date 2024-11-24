@@ -55,8 +55,8 @@ func (c *Cookiestore) GetOIDCSession(r *http.Request) (*SessionData, error) {
 	} else if err == nil {
 		// got a cookie, load it
 		o2t := new(oauth2.Token)
-		o2t = oidc.TokenWithID(o2t, idtc.Value)
-		sd.Token = &oidc.MarshaledToken{
+		o2t = oidc.AddIDToken(o2t, idtc.Value)
+		sd.Token = &oidc.TokenWithID{
 			Token: o2t,
 		}
 	}

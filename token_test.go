@@ -18,14 +18,14 @@ func TestMarshaledToken(t *testing.T) {
 	}
 	in = in.WithExtra(map[string]any{"id_token": "cccccc"})
 
-	mt := &MarshaledToken{in}
+	mt := &TokenWithID{in}
 
 	b, err := json.Marshal(mt)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got := new(MarshaledToken)
+	got := new(TokenWithID)
 	if err := json.Unmarshal(b, got); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestMarshaledToken(t *testing.T) {
 		t.Error(diff)
 	}
 
-	idt, ok := IDToken(got.Token)
+	idt, ok := GetIDToken(got.Token)
 	if !ok || idt != "cccccc" {
 		t.Errorf("want idt to exist and be cccccc, got: %s (exist %t)", idt, ok)
 	}

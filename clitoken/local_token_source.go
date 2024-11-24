@@ -2,64 +2,76 @@ package clitoken
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
 
-	"github.com/lstoll/oidc"
+	"github.com/lstoll/oidc/internal"
 	"golang.org/x/oauth2"
 )
 
-var (
-	// RandomNonceGenerator generates a cryptographically-secure 128-bit random
-	// nonce, encoded into a base64 string. Use with WithNonceGenerator.
-	RandomNonceGenerator = func(ctx context.Context) (string, error) {
-		b := make([]byte, 16)
-		if _, err := io.ReadFull(rand.Reader, b); err != nil {
-			return "", err
-		}
+// Config configures a CLI local token source. This is used to implement the
+// 3-legged oauth2 flow for local/CLI applications, where the callback is a
+// dynamic server listening on localhost.
+type Config struct {
+	// OAuth2Config is the configuration for the provider. Required.
+	OAuth2Config oauth2.Config
 
-		return base64.StdEncoding.EncodeToString(b), nil
-	}
-)
+	// Opener is used to launch the users browser in to the auth flow. If not
+	// set, an appropriate opener for the platform will be automatically
+	// configured.
+	Opener Opener
 
-const (
-	ACRMultiFactor         string = "http://schemas.openid.net/pape/policies/2007/06/multi-factor"
-	ACRMultiFactorPhysical string = "http://schemas.openid.net/pape/policies/2007/06/multi-factor-physical"
+	// PortLow is used with PortHigh to specify the port range of the local
+	// server. If not set, Go's default port allocation is used. Both PortLow
+	// and PortHigh must be specified.
+	PortLow uint16
+	// PortHigh sets the upper range of ports used to configure the local
+	// server, if PortLow is set.
+	PortHigh uint16
 
-	AMROTP string = "otp"
-)
+	// Renderer is used to render the callback page in the users browser, on
+	// completion of the auth flow. Defaults to a basic UI
+	Renderer Renderer
 
-type LocalOIDCTokenSource struct {
-	sync.Mutex
-
-	ctx context.Context
-
-	oa2Cfg oauth2.Config
-
-	opener Opener
-
-	nonceGenerator func(context.Context) (string, error)
-
-	portLow  int
-	portHigh int
-
-	renderer Renderer
+	// AuthCodeOptions are used to provide additional options to the auth code
+	// URL when starting the flow. The code challenge/PKCE option should not be
+	// set here, it will be managed dynamically.
+	AuthCodeOptions []oauth2.AuthCodeOption
+	// SkipPKCE disables the use of PKCE/Code challenge. This should only be
+	// used if problems are experienced with it, with consideration to the
+	// security implications.
+	SkipPKCE bool
 }
 
-type LocalOIDCTokenSourceOpt func(s *LocalOIDCTokenSource)
+func (c *Config) getRenderer() Renderer {
+	if c.Renderer != nil {
+		return c.Renderer
+	}
+	return &renderer{}
+}
 
-var _ oauth2.TokenSource = (*LocalOIDCTokenSource)(nil)
+func (c *Config) getOpener() Opener {
+	if c.Opener != nil {
+		return c.Opener
+	}
+	return DetectOpener()
+}
 
-// NewSource creates a token source that command line (CLI) programs can use to
-// fetch tokens from an OAuth2/OIDC Provider for use in authenticating clients
-// to other systems (e.g., Kubernetes clusters, Docker registries, etc.). The
-// client should be configured with any scopes/acr values that are required.
+func (c *Config) getPortRange() (low uint16, high uint16) {
+	if c.PortLow != 0 && c.PortHigh != 0 {
+		return c.PortLow, c.PortHigh
+	}
+	return 0, 0
+}
+
+// TokenSource creates a token source that command line (CLI) programs can use
+// to fetch tokens from an OAuth2/OIDC Provider for use in authenticating
+// clients to other systems (e.g., Kubernetes clusters, Docker registries,
+// etc.). The client should be configured with any scopes or auth code options
+// that are required.
 //
 // This will trigger the auth flow each time, in practice the result should be
 // cached. The resulting tokens are not verified, and the caller should verify
@@ -67,95 +79,53 @@ var _ oauth2.TokenSource = (*LocalOIDCTokenSource)(nil)
 //
 // Example:
 //
-// ctx := context.TODO()
+//	ctx := context.TODO()
 //
 //	provider, err := oidc.DiscoverProvider(ctx, issuer)
 //	if err != nil {
-//		// handle err
+//	    // handle err
 //	}
 //
-//	oa2Cfg := oauth2.Config{
-//		ClientID:     clientID,
-//		ClientSecret: clientSecret,
-//		Endpoint:     provider.Endpoint(),
-//		Scopes: []string{oidc.ScopeOpenID},
+//	cfg := Config{
+//	    OAuth2Config: oauth2.Config{
+//	        ClientID:       clientID,
+//	        ClientSecret:   clientSecret,
+//	        Endpoint:       provider.Endpoint(),
+//	        Scopes:         []string{oidc.ScopeOpenID},
+//	    }
 //	}
 //
-//	ts, err := NewSource(ctx, oa2Cfg)
+//	ts, err := cfg.TokenSource(ctx)
 //	if err != nil {
-//		// handle err
+//	    // handle err
 //	}
 //
 //	token, err := ts.Token()
 //	if err != nil {
-//		// handle error
+//	    // handle error
 //	}
 //
-// use token
-func NewSource(ctx context.Context, oa2Cfg oauth2.Config, opts ...LocalOIDCTokenSourceOpt) (*LocalOIDCTokenSource, error) {
-	s := &LocalOIDCTokenSource{
-		ctx:      ctx,
-		oa2Cfg:   oa2Cfg,
-		opener:   DetectOpener(),
-		renderer: &renderer{},
-	}
-
-	for _, opt := range opts {
-		opt(s)
-	}
-
-	return s, nil
+//	// use token
+func (c *Config) TokenSource(ctx context.Context) (oauth2.TokenSource, error) {
+	return &cliTokenSource{ctx: ctx, cfg: c}, nil
 }
 
-// WithNonceGenerator specifies a function that generates a nonce. If a nonce
-// generator is present, this token source should not be wrapped in any kind of
-// cache.
-func WithNonceGenerator(generator func(context.Context) (string, error)) LocalOIDCTokenSourceOpt {
-	return func(s *LocalOIDCTokenSource) {
-		s.nonceGenerator = generator
-	}
-}
-
-// WithPortRange specifies a port range for the local listener to use. The
-// first port in the range that is free will be bound. By default, port 0 is
-// bound, letting the operating system find a free port automatically. However,
-// some OAuth servers only support a limited number of redirect URLs. In that
-// case, the port range may need to be constrained to a known range.
-func WithPortRange(portLow int, portHigh int) LocalOIDCTokenSourceOpt {
-	return func(s *LocalOIDCTokenSource) {
-		s.portLow = portLow
-		s.portHigh = portHigh
-	}
-}
-
-// WithRenderer sets a customer renderer. The renderer can optionally implement
-// the http.Handler interface. If it does, it will be called for all requests on
-// the local HTTP server that are not handled by the TokenSource. This can be
-// used to serve additional content the renderer depends on.
-func WithRenderer(renderer Renderer) LocalOIDCTokenSourceOpt {
-	return func(s *LocalOIDCTokenSource) {
-		s.renderer = renderer
-	}
-}
-
-// WithOpener sets a custom handler for launching URLs on the user's system.
-// This is used to kick them in to the auth flow.
-func WithOpener(opener Opener) LocalOIDCTokenSourceOpt {
-	return func(s *LocalOIDCTokenSource) {
-		s.opener = opener
-	}
+type cliTokenSource struct {
+	mu  sync.Mutex
+	ctx context.Context
+	cfg *Config
 }
 
 // Token attempts to a fetch a token. The user will be required to open a URL
 // in their browser and authenticate to the upstream IdP.
-func (s *LocalOIDCTokenSource) Token() (*oauth2.Token, error) {
-	s.Lock()
-	defer s.Unlock()
+func (c *cliTokenSource) Token() (*oauth2.Token, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	state, err := randomStateValue()
-	if err != nil {
-		return nil, err
-	}
+	// shallow clone, as we mutate it
+	o2cfg := c.cfg.OAuth2Config
+
+	state := internal.RandText()
 
 	type result struct {
 		code string
@@ -172,7 +142,7 @@ func (s *LocalOIDCTokenSource) Token() (*oauth2.Token, error) {
 			resultCh <- result{err: err}
 
 			w.WriteHeader(http.StatusBadRequest)
-			_ = s.renderer.RenderLocalTokenSourceError(w, err.Error())
+			_ = c.cfg.getRenderer().RenderLocalTokenSourceError(w, err.Error())
 			return
 		}
 
@@ -182,7 +152,7 @@ func (s *LocalOIDCTokenSource) Token() (*oauth2.Token, error) {
 			resultCh <- result{err: err}
 
 			w.WriteHeader(http.StatusBadRequest)
-			_ = s.renderer.RenderLocalTokenSourceError(w, err.Error())
+			_ = c.cfg.getRenderer().RenderLocalTokenSourceError(w, err.Error())
 			return
 		}
 
@@ -192,7 +162,7 @@ func (s *LocalOIDCTokenSource) Token() (*oauth2.Token, error) {
 			resultCh <- result{err: err}
 
 			w.WriteHeader(http.StatusBadRequest)
-			_ = s.renderer.RenderLocalTokenSourceError(w, err.Error())
+			_ = c.cfg.getRenderer().RenderLocalTokenSourceError(w, err.Error())
 			return
 		}
 
@@ -200,23 +170,23 @@ func (s *LocalOIDCTokenSource) Token() (*oauth2.Token, error) {
 			// Callback has been invoked multiple times, which should not happen.
 			// Bomb out to avoid a blocking channel write and to float this as a bug.
 			w.WriteHeader(http.StatusBadRequest)
-			_ = s.renderer.RenderLocalTokenSourceError(w, "callback invoked multiple times")
+			_ = c.cfg.getRenderer().RenderLocalTokenSourceError(w, "callback invoked multiple times")
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
-		_ = s.renderer.RenderLocalTokenSourceTokenIssued(w)
+		_ = c.cfg.getRenderer().RenderLocalTokenSourceTokenIssued(w)
 
 		resultCh <- result{code: code}
 	})
 
-	if h, ok := s.renderer.(http.Handler); ok {
+	if h, ok := c.cfg.getRenderer().(http.Handler); ok {
 		mux.Handle("/", h)
 	}
 
 	httpSrv := &http.Server{Handler: mux}
 
-	ln, err := newLocalTCPListenerInRange(s.portLow, s.portHigh)
+	ln, err := newLocalTCPListenerInRange(c.cfg.getPortRange())
 	if err != nil {
 		return nil, fmt.Errorf("failed to bind socket: %w", err)
 	}
@@ -224,34 +194,30 @@ func (s *LocalOIDCTokenSource) Token() (*oauth2.Token, error) {
 	tcpAddr := ln.Addr().(*net.TCPAddr)
 
 	go func() { _ = httpSrv.Serve(ln) }()
-	defer func() { _ = httpSrv.Shutdown(s.ctx) }()
+	defer func() { _ = httpSrv.Shutdown(c.ctx) }()
 
-	verifier := oauth2.GenerateVerifier()
-	authCodeOpts := []oauth2.AuthCodeOption{
-		oauth2.S256ChallengeOption(verifier),
-	}
-	if s.nonceGenerator != nil {
-		nonce, err := s.nonceGenerator(s.ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate nonce: %v", err)
-		}
-
-		authCodeOpts = append(authCodeOpts, oidc.SetNonce(nonce))
+	var (
+		verifier string
+		acopts   []oauth2.AuthCodeOption
+	)
+	if !c.cfg.SkipPKCE {
+		verifier = oauth2.GenerateVerifier()
+		acopts = append(c.cfg.AuthCodeOptions, oauth2.S256ChallengeOption(verifier))
 	}
 
 	// we need to update this each invocation
-	s.oa2Cfg.RedirectURL = fmt.Sprintf("http://127.0.0.1:%d/callback", tcpAddr.Port)
+	o2cfg.RedirectURL = fmt.Sprintf("http://127.0.0.1:%d/callback", tcpAddr.Port)
 
-	authURL := s.oa2Cfg.AuthCodeURL(state, authCodeOpts...)
+	authURL := o2cfg.AuthCodeURL(state, acopts...)
 
-	if err := s.opener.Open(s.ctx, authURL); err != nil {
+	if err := c.cfg.getOpener().Open(c.ctx, authURL); err != nil {
 		return nil, fmt.Errorf("failed to open URL: %w", err)
 	}
 
 	var res result
 	select {
-	case <-s.ctx.Done():
-		return nil, s.ctx.Err()
+	case <-c.ctx.Done():
+		return nil, c.ctx.Err()
 	case res = <-resultCh:
 		// continue
 	}
@@ -260,10 +226,15 @@ func (s *LocalOIDCTokenSource) Token() (*oauth2.Token, error) {
 		return nil, res.err
 	}
 
-	return s.oa2Cfg.Exchange(s.ctx, res.code, oauth2.VerifierOption(verifier))
+	var exchopts []oauth2.AuthCodeOption
+	if verifier != "" {
+		exchopts = append(exchopts, oauth2.VerifierOption(verifier))
+	}
+	return o2cfg.Exchange(c.ctx, res.code, exchopts...)
 }
 
-func newLocalTCPListenerInRange(portLow int, portHigh int) (net.Listener, error) {
+func newLocalTCPListenerInRange(portLow uint16, portHigh uint16) (net.Listener, error) {
+	// if 0, 0, we try with :0 which will dynamically allocate
 	for i := portLow; i <= portHigh; i++ {
 		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", i))
 		if err == nil {
@@ -272,15 +243,4 @@ func newLocalTCPListenerInRange(portLow int, portHigh int) (net.Listener, error)
 	}
 
 	return nil, fmt.Errorf("no TCP port available in the range %d-%d", portLow, portHigh)
-}
-
-func randomStateValue() (string, error) {
-	const numBytes = 16
-
-	b := make([]byte, numBytes)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-
-	return base64.RawStdEncoding.EncodeToString(b), nil
 }

@@ -301,7 +301,7 @@ type IDTokenValidationOpts struct {
 // returned. Options should either have an audience specified, or have audience
 // validation opted out of.
 func (p *Provider) VerifyIDToken(ctx context.Context, tok *oauth2.Token, opts IDTokenValidationOpts) (*jwt.VerifiedJWT, *IDClaims, error) {
-	idt, ok := IDToken(tok)
+	idt, ok := GetIDToken(tok)
 	if !ok {
 		return nil, nil, fmt.Errorf("token does not contain an ID token")
 	}

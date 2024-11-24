@@ -37,7 +37,7 @@ type SessionData struct {
 	// Logins tracks state for in-progress logins.
 	Logins []SessionDataLogin `json:"logins,omitempty"`
 	// Token contains the issued token from a successful authentication flow.
-	Token *oidc.MarshaledToken `json:"token,omitempty"`
+	Token *oidc.TokenWithID `json:"token,omitempty"`
 }
 
 type SessionDataLogin struct {
@@ -264,7 +264,7 @@ func (h *Handler) authenticateCallback(r *http.Request, session *SessionData) (s
 		return "", fmt.Errorf("verifying id_token failed: %w", err)
 	}
 
-	session.Token = &oidc.MarshaledToken{Token: token}
+	session.Token = &oidc.TokenWithID{Token: token}
 
 	returnTo := foundLogin.ReturnTo
 	if returnTo == "" {

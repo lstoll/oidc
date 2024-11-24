@@ -28,6 +28,13 @@ const (
 	ScopeOfflineAccess = "offline_access"
 )
 
+const (
+	ACRMultiFactor         string = "http://schemas.openid.net/pape/policies/2007/06/multi-factor"
+	ACRMultiFactorPhysical string = "http://schemas.openid.net/pape/policies/2007/06/multi-factor-physical"
+
+	AMROTP string = "otp"
+)
+
 func SetACRValues(acrValues []string) oauth2.AuthCodeOption {
 	return oauth2.SetAuthURLParam("acr_values", strings.Join(acrValues, " "))
 }

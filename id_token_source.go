@@ -14,7 +14,7 @@ type idTokenSource struct {
 // token for outgoing requests. This is a backwards compatibility option for
 // services that expect the ID token contents, or where the access token is not
 // a JWT/not otherwise verifiable. It should be the _last_ token source in any
-// chain, the result from the should not be cached.
+// chain, the result from this should not be cached.
 //
 // Deprecated: Services should expect oauth2 access tokens, and use the userinfo
 // endpoint if profile information is required.
