@@ -158,9 +158,14 @@ func main() {
 		Endpoint:     provider.Endpoint(),
 		Scopes:       scopes,
 	}
+	clitokCfg := clitoken.Config{
+		OAuth2Config: oa2Cfg,
+		PortLow:      uint16(baseFlags.PortLow),
+		PortHigh:     uint16(baseFlags.PortHigh),
+	}
 
 	var ts oauth2.TokenSource
-	ts, err = clitoken.NewSource(ctx, oa2Cfg, clitoken.WithPortRange(baseFlags.PortLow, baseFlags.PortHigh))
+	ts, err = clitokCfg.TokenSource(ctx)
 	if err != nil {
 		fmt.Printf("getting cli token source: %v", err)
 		os.Exit(1)
