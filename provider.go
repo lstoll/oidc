@@ -394,7 +394,9 @@ func (s *staticPublicHandle) PublicHandle(context.Context) (*keyset.Handle, erro
 	return s.h, nil
 }
 
-// NewStaticPublicHandle creates a PublicHandle from a fixed keyset Handle.
+// NewStaticPublicHandle creates a PublicHandle from a fixed keyset Handle. This
+// handle is used for JWT verification, so must be for a JWT type and contain
+// the public keys only.
 func NewStaticPublicHandle(h *keyset.Handle) PublicHandle {
 	return &staticPublicHandle{h: h}
 }
