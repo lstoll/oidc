@@ -39,7 +39,7 @@ func (i *idTokenSource) Token() (*oauth2.Token, error) {
 		return nil, fmt.Errorf("getting token from wrapped source: %w", err)
 	}
 	idt, ok := t.Extra("id_token").(string)
-	if ok || idt == "" {
+	if !ok || idt == "" {
 		return nil, fmt.Errorf("token contains no id_token")
 	}
 	newToken := new(oauth2.Token)
