@@ -17,7 +17,8 @@ type Config struct {
 	// that the correct token is retrieved. e.g it should reflect the client ID,
 	// scopes, and any other authentication context used to obtain the token.
 	// Helper methods are provided to calculate this. Helpers functions are
-	// provided to calculate this.
+	// provided to calculate this. If not provided, the client ID will be used
+	// from the Oauth2Config if set. Otherwise, an error will occur.
 	CacheKey string
 	// WrappedSource is the oauth2.TokenSource we retrieve tokens to cache from.
 	WrappedSource oauth2.TokenSource
@@ -50,7 +51,10 @@ func (c *Config) TokenSource(ctx context.Context) (oauth2.TokenSource, error) {
 		validErr = errors.Join(validErr, fmt.Errorf("issuer must be specified"))
 	}
 	if c.CacheKey == "" {
-		validErr = errors.Join(validErr, fmt.Errorf("cache key must be specified"))
+		if c.OAuth2Config == nil || c.OAuth2Config.ClientID == "" {
+			validErr = errors.Join(validErr, fmt.Errorf("cache key must be specified when oauth2 config not provided, or it has no client ID"))
+		}
+		c.CacheKey = c.OAuth2Config.ClientID
 	}
 	if c.WrappedSource == nil {
 		validErr = errors.Join(validErr, fmt.Errorf("a wrapped TokenSource must be provided"))
