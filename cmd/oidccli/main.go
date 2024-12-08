@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"github.com/lstoll/oidc"
 	"github.com/lstoll/oidc/clitoken"
 	"github.com/lstoll/oidc/tokencache"
-	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 )
 
@@ -173,8 +173,11 @@ func main() {
 
 	if !baseFlags.SkipCache {
 		ccfg := tokencache.Config{
-			Issuer:        baseFlags.Issuer,
-			CacheKey:      (tokencache.IDTokenCacheKey{}).Key(),
+			Issuer: baseFlags.Issuer,
+			CacheKey: (tokencache.IDTokenCacheKey{
+				ClientID: baseFlags.ClientID,
+				Scopes:   scopes,
+			}).Key(),
 			WrappedSource: ts,
 			Cache:         clitoken.BestCredentialCache(),
 		}
