@@ -10,18 +10,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func TestKeychainCredentialCache(t *testing.T) {
-	// This test requires access to macOS Keychain
-	if os.Getenv("TEST_KEYCHAIN_CREDENTIAL_CACHE") == "" {
-		t.Skip("TEST_KEYCHAIN_CREDENTIAL_CACHE not set")
-		return
-	}
-
-	cache := &KeychainCredentialCache{}
-
-	testCache(t, cache)
-}
-
 func TestEncryptedFileCredentialCache(t *testing.T) {
 	dir, err := os.MkdirTemp("", "cachetest")
 	if err != nil {

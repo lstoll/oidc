@@ -9,12 +9,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
-	"runtime"
 	"strings"
 
-	"github.com/lstoll/oidc"
 	"github.com/lstoll/oidc/tokencache"
 	"golang.org/x/crypto/nacl/secretbox"
 	"golang.org/x/crypto/scrypt"
@@ -22,84 +19,26 @@ import (
 	"golang.org/x/term"
 )
 
+var (
+	// platformCache is registered by any platform specific caches, and should be
+	// preferred
+	platformCaches []tokencache.CredentialCache
+	// genericCaches is a list in preference order of non-platform specific caches
+	genericCaches = []tokencache.CredentialCache{&EncryptedFileCredentialCache{}}
+)
+
 type PassphrasePromptFunc func(prompt string) (passphrase string, err error)
 
 // BestCredentialCache returns the most preferred available credential client
 // for the platform and environment.
 func BestCredentialCache() tokencache.CredentialCache {
-	for _, c := range []tokencache.CredentialCache{
-		&KeychainCredentialCache{},
-		&EncryptedFileCredentialCache{},
-	} {
+	for _, c := range append(platformCaches, genericCaches...) {
 		if c.Available() {
 			return c
 		}
 	}
 
 	return &NullCredentialCache{}
-}
-
-type KeychainCredentialCache struct{}
-
-var _ tokencache.CredentialCache = &KeychainCredentialCache{}
-
-func (k *KeychainCredentialCache) Get(issuer, key string) (*oauth2.Token, error) {
-	cmd := exec.Command(
-		"/usr/bin/security",
-		"find-generic-password",
-		"-s", issuer,
-		"-a", key,
-		"-w",
-	)
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		if bytes.Contains(out, []byte("could not be found")) {
-			return nil, nil
-		}
-
-		return nil, fmt.Errorf("%s: %w", string(out), err)
-	}
-
-	var token oidc.TokenWithID
-	if err := json.Unmarshal(out, &token); err != nil {
-		return nil, fmt.Errorf("failed to decode token: %w", err)
-	}
-
-	return token.Token, nil
-}
-
-func (k *KeychainCredentialCache) Set(issuer, key string, token *oauth2.Token) error {
-	b, err := json.Marshal(oidc.TokenWithID{Token: token})
-	if err != nil {
-		return fmt.Errorf("failed to encode token: %w", err)
-	}
-
-	cmd := exec.Command(
-		"/usr/bin/security",
-		"add-generic-password",
-		"-s", issuer,
-		"-a", key,
-		"-w", string(b),
-		"-U",
-	)
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s: %w", string(out), err)
-	}
-
-	return nil
-}
-
-func (k *KeychainCredentialCache) Available() bool {
-	if runtime.GOOS != "darwin" {
-		return false
-	}
-
-	_, err := os.Stat("/usr/bin/security")
-
-	return err == nil
 }
 
 const encryptedFileKeySize = 32
