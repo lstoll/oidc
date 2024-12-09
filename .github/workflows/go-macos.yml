@@ -1,0 +1,47 @@
+name: Go
+on: [push]
+jobs:
+
+  build:
+    name: "Build (macOS) - CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}"
+    runs-on: macos-latest
+    strategy:
+      # we use a matrix because the two test types don't interact well -
+      # keychain permissions will pop up a dialog to allow access, and we can't
+      # approve that.
+      matrix:
+        envs:
+        - CGO_ENABLED: 0
+        - CGO_ENABLED: 1
+    env:
+      GOTOOLCHAIN: local
+
+    steps:
+
+    - name: Print CGO_ENABLED
+      env:
+        CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
+      run: echo "CGO_ENABLED is $CGO_ENABLED"
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: stable
+      id: go
+
+    - name: Get dependencies
+      run: go mod download
+
+    - name: Build
+      run: go build ./...
+      env:
+        CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
+
+    - name: Test
+      run: go test -timeout=15s -v ./...
+      env:
+        CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
+        TEST_KEYCHAIN_CREDENTIAL_CACHE: 1
