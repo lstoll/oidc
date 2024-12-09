@@ -13,14 +13,14 @@ jobs:
 
     steps:
 
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+
     - name: Set up Go ${{ matrix.go }}
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go }}
       id: go
-
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v4
 
     - name: Get dependencies
       run: go mod download
@@ -35,3 +35,11 @@ jobs:
       uses: golangci/golangci-lint-action@v6
       with:
         version: latest
+
+    - name: Check CLI Keychain in cross-compiled binary
+      env:
+        GOOS: darwin
+        CGO_ENABLED: 0
+      run: |
+        go build -o oidccli ./cmd/oidccli
+        go tool nm oidccli | grep -F 'oidc/clitoken.(*KeychainCLICredentialCache)'
