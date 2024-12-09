@@ -35,13 +35,57 @@ jobs:
     - name: Get dependencies
       run: go mod download
 
-    - name: Build
-      run: go build ./...
+    - name: Build & Test
+      run: |
+        go build ./...
+        go test ./...
       env:
         CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
 
-    - name: Test
-      run: go test -timeout=15s -v ./...
+    # The goal here is to test against the keychain. We expect the same binary
+    # to be able to read existing data in repeated invocations, and a new binary
+    # to not be able to, but also clean up without user interaction and store
+    # new values.
+
+    - name: Build CLI Token test binary
+      run: go test -c ./clitoken
+      env:
+        CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
+
+    - name: Test CLI Token initial
+      run: ./clitoken.test -test.v -test.timeout=15s
+      env:
+        CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
+        TEST_KEYCHAIN_CREDENTIAL_CACHE: 1
+
+    - name: Test CLI Token with existing entry
+      run: ./clitoken.test -test.v -test.timeout=15s
+      env:
+        CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
+        TEST_KEYCHAIN_CREDENTIAL_CACHE_EXISTING: 1
+        TEST_KEYCHAIN_CREDENTIAL_CACHE: 1
+
+    # just re-compiling the same input results in a binary that's "close enough"
+    # for the keychain. So inject a new file to change this, and also indicate
+    # the change.
+    - name: Build modified CLI Token test binary
+      run: |
+        cat <<- EOF > clitoken/modify.go
+        package clitoken
+
+        import "log"
+
+        func init() {
+          log.Printf("this is a modified binary")
+        }
+        EOF
+
+        go test -c ./clitoken
+      env:
+        CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
+
+    - name: Re-test CLI token with modified binary
+      run: ./clitoken.test -test.v -test.timeout=15s
       env:
         CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
         TEST_KEYCHAIN_CREDENTIAL_CACHE: 1
