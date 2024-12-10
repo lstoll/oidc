@@ -10,6 +10,22 @@ import (
 	"golang.org/x/oauth2"
 )
 
+func TestKeychainCLICredentialCache(t *testing.T) {
+	// This test requires access to macOS Keychain
+	if os.Getenv("TEST_KEYCHAIN_CLI_CREDENTIAL_CACHE") == "" {
+		t.Skip("TEST_KEYCHAIN_CLI_CREDENTIAL_CACHE not set")
+		return
+	}
+
+	cache := &KeychainCLICredentialCache{}
+
+	if !cache.Available() {
+		t.Fatal("cache is not available")
+	}
+
+	testCache(t, cache)
+}
+
 func TestEncryptedFileCredentialCache(t *testing.T) {
 	dir, err := os.MkdirTemp("", "cachetest")
 	if err != nil {
@@ -35,6 +51,11 @@ func TestMemoryWriteThroughCredentialCache(t *testing.T) {
 	testCache(t, cache)
 }
 
+const (
+	issuer1         = "https://issuer1.test"
+	issuer1ClientID = "clientID"
+)
+
 func testCache(t *testing.T, cache tokencache.CredentialCache) {
 	for _, tc := range []struct {
 		name string
@@ -46,11 +67,11 @@ func testCache(t *testing.T, cache tokencache.CredentialCache) {
 			run: func(cache tokencache.CredentialCache) (*oauth2.Token, error) {
 				token := (&oauth2.Token{AccessToken: "abc123"}).WithExtra(map[string]any{"id_token": "zyx987"})
 
-				if err := cache.Set("https://issuer1.test", "clientID", token); err != nil {
+				if err := cache.Set(issuer1, issuer1ClientID, token); err != nil {
 					return nil, err
 				}
 
-				return cache.Get("https://issuer1.test", "clientID")
+				return cache.Get(issuer1, issuer1ClientID)
 			},
 			want: (&oauth2.Token{AccessToken: "abc123"}).WithExtra(map[string]any{"id_token": "zyx987"}),
 		},
