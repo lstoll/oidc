@@ -45,7 +45,8 @@ jobs:
     # The goal here is to test against the keychain. We expect the same binary
     # to be able to read existing data in repeated invocations, and a new binary
     # to not be able to, but also clean up without user interaction and store
-    # new values.
+    # new values. We also test the CLI version where it makes sense, it's items
+    # don't conflict with the direct keychain versions.
 
     - name: Build CLI Token test binary
       run: go test -c ./clitoken
@@ -57,6 +58,7 @@ jobs:
       env:
         CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
         TEST_KEYCHAIN_CREDENTIAL_CACHE: 1
+        TEST_KEYCHAIN_CLI_CREDENTIAL_CACHE: 1
 
     - name: Test CLI Token with existing entry
       run: ./clitoken.test -test.v -test.timeout=15s
@@ -89,3 +91,4 @@ jobs:
       env:
         CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
         TEST_KEYCHAIN_CREDENTIAL_CACHE: 1
+        TEST_KEYCHAIN_CLI_CREDENTIAL_CACHE: 1
