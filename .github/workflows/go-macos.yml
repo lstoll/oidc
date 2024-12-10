@@ -45,3 +45,7 @@ jobs:
       env:
         CGO_ENABLED: ${{ matrix.envs.CGO_ENABLED }}
         TEST_KEYCHAIN_CREDENTIAL_CACHE: 1
+
+      # TODO - force the build of a new binary, and try it again. should fail
+      # unless we correctly identify the binary probably echo a new file or
+      # something into the clitoken dir
