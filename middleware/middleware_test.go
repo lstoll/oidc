@@ -30,7 +30,7 @@ type mockOIDCServer struct {
 	validClientID     string
 	validClientSecret string
 	validRedirectURL  string
-	claims            map[string]interface{}
+	claims            map[string]any
 
 	keyset *keyset.Handle
 
@@ -216,7 +216,7 @@ func (s *mockOIDCServer) handleKeys(w http.ResponseWriter, r *http.Request) {
 
 func TestMiddleware_HappyPath(t *testing.T) {
 	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(fmt.Sprintf("sub: %s", IDClaimsFromContext(r.Context()).Subject)))
+		_, _ = w.Write(fmt.Appendf(nil, "sub: %s", IDClaimsFromContext(r.Context()).Subject))
 	})
 
 	oidcServer, oidcHTTPServer := startMockOIDCServer(t)
@@ -227,7 +227,7 @@ func TestMiddleware_HappyPath(t *testing.T) {
 	oidcServer.validClientID = "valid-client-id"
 	oidcServer.validClientSecret = "valid-client-secret"
 	oidcServer.validRedirectURL = fmt.Sprintf("%s/callback", httpServer.URL)
-	oidcServer.claims = map[string]interface{}{"sub": "valid-subject"}
+	oidcServer.claims = map[string]any{"sub": "valid-subject"}
 
 	discoveryOpts = &oidc.DiscoverOptions{
 		HTTPClient: oidcHTTPServer.Client(),
@@ -314,7 +314,7 @@ func TestContext(t *testing.T) {
 	oidcServer.validClientID = "valid-client-id"
 	oidcServer.validClientSecret = "valid-client-secret"
 	oidcServer.validRedirectURL = fmt.Sprintf("%s/callback", httpServer.URL)
-	oidcServer.claims = map[string]interface{}{"sub": "valid-subject"}
+	oidcServer.claims = map[string]any{"sub": "valid-subject"}
 
 	discoveryOpts = &oidc.DiscoverOptions{
 		HTTPClient: oidcHTTPServer.Client(),

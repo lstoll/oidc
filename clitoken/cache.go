@@ -260,13 +260,13 @@ func (e *EncryptedFileCredentialCache) resolveDir() (string, error) {
 
 func (e *EncryptedFileCredentialCache) cacheFilename(issuer, key string) string {
 	// A hash is used to avoid special characters in filenames
-	hsh := sha256.Sum256([]byte(
-		fmt.Sprintf(
+	hsh := sha256.Sum256(
+		fmt.Appendf(nil,
 			"%s;%s",
 			issuer,
 			key,
 		),
-	))
+	)
 
 	return hex.EncodeToString(hsh[:]) + ".enc"
 }

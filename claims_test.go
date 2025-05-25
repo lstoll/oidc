@@ -154,7 +154,7 @@ func fillStructWithRandomData(v any, ignoreClaims []string) {
 	val := reflect.ValueOf(v).Elem()
 	typeOfV := val.Type()
 
-	for i := 0; i < val.NumField(); i++ {
+	for i := range val.NumField() {
 		field := val.Field(i)
 
 		jsonTag := typeOfV.Field(i).Tag.Get("json")
@@ -195,7 +195,7 @@ func randomString(length int) string {
 
 func randomStringSlice(size int) []string {
 	slice := make([]string, size)
-	for i := 0; i < size; i++ {
+	for i := range size {
 		slice[i] = randomString(3)
 	}
 	return slice
@@ -211,7 +211,7 @@ func randomUnixTime() UnixTime {
 
 func randomStringMap(size int) map[string]string {
 	m := make(map[string]string)
-	for i := 0; i < size; i++ {
+	for range size {
 		key := randomString(5)
 		value := randomString(10)
 		m[key] = value
