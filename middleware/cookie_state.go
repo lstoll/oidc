@@ -16,23 +16,14 @@ import (
 	"golang.org/x/oauth2"
 )
 
-const (
-	// maxLoginStatesCookieSizeBytes defines the maximum size of the raw login
-	// states string before base64 encoding. Cookies have a general limit of
-	// around 4KB. We leave some room for base64 expansion and other cookie
-	// attributes.
-	maxLoginStatesCookieSizeBytes = 3000
-
-	fieldSeparator  = "\x1f" // ASCII Record Separator
-	recordSeparator = "\x1e" // ASCII Field Separator
-)
+const DefaultMaxActiveLoginStates = 5
 
 type CookieOpts struct {
-	TokenCookieName string
-	LoginCookieName string
-	Path            string
-	Secure          bool
-	SameSite        http.SameSite
+	TokenCookieName        string
+	LoginStateCookiePrefix string // Prefix for cookies storing individual login states
+	Path                   string
+	Secure                 bool
+	SameSite               http.SameSite
 	// Persist is used to control if the token cookie is persisted across
 	// browser sessions. If true, the cookie expiration will be set based on the
 	// token lifetime. If false, the cookie will be set to expire when the
@@ -41,11 +32,11 @@ type CookieOpts struct {
 }
 
 var DefaultCookieOpts = CookieOpts{
-	TokenCookieName: "__HOST-auth",
-	LoginCookieName: "__HOST-logins",
-	Path:            "/",
-	Secure:          true,
-	SameSite:        http.SameSiteLaxMode,
+	TokenCookieName:        "__HOST-auth",
+	LoginStateCookiePrefix: "__HOST-lstate-", // Note the trailing hyphen for separation
+	Path:                   "/",
+	Secure:                 true,
+	SameSite:               http.SameSiteLaxMode,
 }
 
 // Cookiestore is a basic implementation of the middleware's session store, that
@@ -60,17 +51,19 @@ var DefaultCookieOpts = CookieOpts{
 type Cookiestore struct {
 	// CookieOpts is used to create the cookie we track the session ID in. If
 	// not set, DefaultCookieOpts will be used.
-	CookieOpts *CookieOpts
+	CookieOpts           *CookieOpts
+	MaxActiveLoginStates int
 }
 
 func (c *Cookiestore) GetOIDCSession(r *http.Request) (*SessionData, error) {
 	sd := &SessionData{}
+	opts := c.getCookieOpts()
 
-	idtc, err := r.Cookie(c.getCookieOpts().TokenCookieName)
+	idtc, err := r.Cookie(opts.TokenCookieName)
 	if err != nil && !errors.Is(err, http.ErrNoCookie) {
-		return nil, fmt.Errorf("getting cookie: %w", err)
+		return nil, fmt.Errorf("getting token cookie %q: %w", opts.TokenCookieName, err)
 	} else if err == nil {
-		// got a cookie, load it
+		// got a token cookie, load it
 		o2t := new(oauth2.Token)
 		o2t = oidc.AddIDToken(o2t, idtc.Value)
 		sd.Token = &oidc.TokenWithID{
@@ -78,41 +71,25 @@ func (c *Cookiestore) GetOIDCSession(r *http.Request) (*SessionData, error) {
 		}
 	}
 
-	// re-construct the login state from a single cookie
-	lsCookie, err := r.Cookie(c.getCookieOpts().LoginCookieName)
-	if err == nil && lsCookie.Value != "" {
-		decodedData, err := base64.RawURLEncoding.DecodeString(lsCookie.Value)
-		if err != nil {
-			// Malformed base64, treat as no cookie or corrupted
-			return sd, nil
-		}
-		loginStatesStr := string(decodedData)
-
-		for entryStr := range strings.SplitSeq(loginStatesStr, recordSeparator) {
-			if entryStr == "" {
-				continue
+	// Reconstruct login states from individual cookies
+	for _, cookie := range r.Cookies() {
+		if strings.HasPrefix(cookie.Name, opts.LoginStateCookiePrefix) {
+			state := strings.TrimPrefix(cookie.Name, opts.LoginStateCookiePrefix)
+			if state == "" {
+				continue // Should not happen with a proper prefix
 			}
-			if strings.Count(entryStr, fieldSeparator) != 3 {
-				// Malformed entry, skip
+
+			v, err := url.ParseQuery(cookie.Value)
+			if err != nil {
+				// Malformed cookie value, skip
 				continue
 			}
 
-			parts := strings.SplitN(entryStr, fieldSeparator, 4)
-			if len(parts) != 4 {
-				// Malformed entry, skip
+			expiresStr := v.Get("ex")
+			if expiresStr == "" {
+				// Expires is mandatory, skip
 				continue
 			}
-
-			state := parts[0]
-			pkceChallenge := parts[1]
-			returnToEscaped := parts[2]
-			expiresStr := parts[3]
-
-			if state == "" || expiresStr == "" { // State and Expires are mandatory
-				// Invalid entry, skip
-				continue
-			}
-
 			expires, err := strconv.ParseInt(expiresStr, 10, 64)
 			if err != nil {
 				// Malformed expires, skip
@@ -120,34 +97,25 @@ func (c *Cookiestore) GetOIDCSession(r *http.Request) (*SessionData, error) {
 			}
 
 			if time.Now().Unix() > expires {
-				// Expired entry, skip
+				// Expired entry, skip (and ideally, should be cleaned up by SaveOIDCSession on next write)
 				continue
-			}
-
-			var returnTo string
-			if returnToEscaped != "" {
-				returnTo, err = url.QueryUnescape(returnToEscaped)
-				if err != nil {
-					// Malformed returnTo, skip
-					continue
-				}
 			}
 
 			sd.Logins = append(sd.Logins, SessionDataLogin{
 				State:         state,
-				PKCEChallenge: pkceChallenge,
-				ReturnTo:      returnTo,
+				PKCEChallenge: v.Get("pc"), // pkce_challenge
+				ReturnTo:      v.Get("rt"), // return_to
 				Expires:       int(expires),
 			})
 		}
-	} else if !errors.Is(err, http.ErrNoCookie) {
-		return nil, fmt.Errorf("getting login states cookie %q: %w", c.getCookieOpts().LoginCookieName, err)
 	}
 
 	return sd, nil
 }
 
 func (c *Cookiestore) SaveOIDCSession(w http.ResponseWriter, r *http.Request, d *SessionData) error {
+
+	// Save or delete the main token cookie
 	if d.Token != nil {
 		tok, exp, err := peekIDT(d.Token.Token)
 		if err != nil {
@@ -157,62 +125,57 @@ func (c *Cookiestore) SaveOIDCSession(w http.ResponseWriter, r *http.Request, d 
 			return fmt.Errorf("saving token cookie: %w", err)
 		}
 	} else {
-		// delete if it exists
 		if err := setCookieIfNotSet(w, r, c.newTokenCookie("", time.Time{})); err != nil {
 			return fmt.Errorf("deleting token cookie: %w", err)
 		}
 	}
 
-	// 1. Collect and filter non-expired SessionDataLogin items
-	validRawLogins := []SessionDataLogin{}
+	// Manage individual login state cookies
+	activeLoginStates := map[string]SessionDataLogin{}
+	validLoginsForCookie := []SessionDataLogin{}
+
 	for _, l := range d.Logins {
 		if time.Now().Unix() > int64(l.Expires) {
-			continue
+			continue // Skip expired logins
 		}
-		validRawLogins = append(validRawLogins, l)
+		validLoginsForCookie = append(validLoginsForCookie, l)
 	}
 
-	// 2. Sort by expiration descending (newest/furthest expiry first)
-	sort.Slice(validRawLogins, func(i, j int) bool {
-		return validRawLogins[i].Expires > validRawLogins[j].Expires
+	// Sort by expiration descending (newest/furthest expiry first)
+	sort.Slice(validLoginsForCookie, func(i, j int) bool {
+		return validLoginsForCookie[i].Expires > validLoginsForCookie[j].Expires
 	})
 
-	loginStatesBuilder := strings.Builder{}
-
-	for _, l := range validRawLogins {
-		// Format: State,PKCEChallenge,URLEncodedReturnTo,ExpiresUnixTimestamp
-		// Ensure ReturnTo is escaped properly for inclusion in a comma-separated list and then URL context
-		returnToStr := ""
-		if l.ReturnTo != "" {
-			returnToStr = url.QueryEscape(l.ReturnTo)
-		}
-
-		stateStr := fmt.Sprintf("%s%s%s%s%s%s%d", l.State, fieldSeparator, l.PKCEChallenge, fieldSeparator, returnToStr, fieldSeparator, l.Expires)
-
-		projectedLen := loginStatesBuilder.Len()
-		if projectedLen > 0 {
-			projectedLen++ // For the semicolon separator
-		}
-		projectedLen += len(stateStr)
-
-		if projectedLen > maxLoginStatesCookieSizeBytes {
-			break // Adding this state would exceed the size limit
-		}
-
-		if loginStatesBuilder.Len() > 0 {
-			loginStatesBuilder.WriteString(recordSeparator)
-		}
-		loginStatesBuilder.WriteString(stateStr)
+	maxStates := c.MaxActiveLoginStates
+	if maxStates <= 0 {
+		maxStates = DefaultMaxActiveLoginStates
+	}
+	if len(validLoginsForCookie) > maxStates {
+		validLoginsForCookie = validLoginsForCookie[:maxStates]
 	}
 
-	// this will automatically delete if we have no state to save.
-	finalLoginStatesString := loginStatesBuilder.String()
-	var cookieValue string
-	if finalLoginStatesString != "" {
-		cookieValue = base64.RawURLEncoding.EncodeToString([]byte(finalLoginStatesString))
+	for _, l := range validLoginsForCookie {
+		activeLoginStates[l.State] = l
 	}
 
-	return setCookieIfNotSet(w, r, c.newLoginStateCookie(cookieValue))
+	// Iterate through existing cookies to update or delete
+	for _, cookie := range r.Cookies() {
+		if strings.HasPrefix(cookie.Name, c.getCookieOpts().LoginStateCookiePrefix) {
+			state := strings.TrimPrefix(cookie.Name, c.getCookieOpts().LoginStateCookiePrefix)
+			if _, isActive := activeLoginStates[state]; !isActive {
+				// This state is no longer active or was truncated, delete its cookie
+				_ = setCookieIfNotSet(w, r, c.newLoginStateCookie(state, "", "", 0))
+			}
+		}
+	}
+
+	// Set cookies for all currently active (and potentially new) login states
+	for state, loginData := range activeLoginStates {
+		cookie := c.newLoginStateCookie(state, loginData.PKCEChallenge, loginData.ReturnTo, loginData.Expires)
+		_ = setCookieIfNotSet(w, r, cookie)
+	}
+
+	return nil
 }
 
 func (c *Cookiestore) newTokenCookie(value string, expires time.Time) *http.Cookie {
@@ -223,6 +186,7 @@ func (c *Cookiestore) newTokenCookie(value string, expires time.Time) *http.Cook
 		Secure:   ct.Secure,
 		SameSite: ct.SameSite,
 		Value:    value,
+		HttpOnly: true,
 	}
 	if value == "" {
 		nc.MaxAge = -1
@@ -236,20 +200,35 @@ func (c *Cookiestore) newTokenCookie(value string, expires time.Time) *http.Cook
 	return nc
 }
 
-func (c *Cookiestore) newLoginStateCookie(value string) *http.Cookie {
-	ct := c.getCookieOpts()
+// newLoginStateCookie creates a cookie for an individual login state.
+// The expiration of the cookie is tied to the login state's expiration.
+func (c *Cookiestore) newLoginStateCookie(state, pkceChallenge, returnTo string, expires int) *http.Cookie {
+	opts := c.getCookieOpts()
+	v := url.Values{}
+	v.Set("ex", strconv.FormatInt(int64(expires), 10))
+	if pkceChallenge != "" {
+		v.Set("pc", pkceChallenge)
+	}
+	if returnTo != "" {
+		v.Set("rt", returnTo)
+	}
+
+	expireTime := time.Unix(int64(expires), 0)
+
 	nc := &http.Cookie{
-		Name:     ct.LoginCookieName,
-		Path:     ct.Path,
-		Secure:   ct.Secure,
-		SameSite: ct.SameSite,
-		Value:    value,
+		Name:     opts.LoginStateCookiePrefix + state,
+		Value:    v.Encode(),
+		Path:     opts.Path,
+		Secure:   opts.Secure,
+		SameSite: opts.SameSite,
+		HttpOnly: true,
 	}
-	if value == "" {
-		nc.MaxAge = -1
+
+	// Set expires/max-age. Login state cookies are not persisted via opts.Persist,
+	// their lifetime is strictly tied to their own 'expires' field.
+	if time.Now().After(expireTime) {
+		nc.MaxAge = -1 // Expired, delete
 	}
-	// login state doesn't make much sense across browser sessions, so we don't
-	// persist it
 	return nc
 }
 

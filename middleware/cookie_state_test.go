@@ -79,9 +79,9 @@ func TestCookiestore_SaveGetOIDCSession(t *testing.T) {
 		t.Fatalf("SaveOIDCSession failed: %v", err)
 	}
 
-	if len(delRR.Result().Cookies()) != 2 {
-		// the token, and the login states cookie
-		t.Errorf("expected 2 cookies for deletion, got %d", len(delRR.Result().Cookies()))
+	if len(delRR.Result().Cookies()) != 3 {
+		// the token, and two login states
+		t.Errorf("expected 3 cookies for deletion, got %d", len(delRR.Result().Cookies()))
 	}
 
 	for _, cookie := range delRR.Result().Cookies() {
