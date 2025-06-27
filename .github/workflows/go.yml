@@ -9,7 +9,7 @@ jobs:
       GOTOOLCHAIN: local
     strategy:
       matrix:
-        go: [ stable, oldstable ]
+        go: [stable] # go: [ stable, oldstable ]
 
     steps:
 
