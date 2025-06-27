@@ -224,7 +224,7 @@ func raw(ts oauth2.TokenSource, opts rawOpts) error {
 	if err != nil {
 		return fmt.Errorf("fetching token: %v", err)
 	}
-	var raw string = tok.AccessToken
+	raw := tok.AccessToken
 	if opts.UseIDToken {
 		idt, ok := oidc.GetIDToken(tok)
 		if !ok {

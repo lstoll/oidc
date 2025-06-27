@@ -9,7 +9,7 @@ jobs:
       GOTOOLCHAIN: local
     strategy:
       matrix:
-        go: [ stable, oldstable ]
+        go: [stable] # go: [ stable, oldstable ]
 
     steps:
 
@@ -32,7 +32,7 @@ jobs:
       run: go test ./...
 
     - name: Lint
-      uses: golangci/golangci-lint-action@v6
+      uses: golangci/golangci-lint-action@v8
       with:
         version: latest
 

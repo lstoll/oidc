@@ -45,7 +45,7 @@ const homePage = `<!DOCTYPE html>
 var homeTmpl = template.Must(template.New("loginPage").Parse(homePage))
 
 func (s *server) home(w http.ResponseWriter, req *http.Request) {
-	tmplData := map[string]interface{}{}
+	tmplData := map[string]any{}
 
 	if err := homeTmpl.Execute(w, tmplData); err != nil {
 		http.Error(w, fmt.Sprintf("failed to render template: %v", err), http.StatusInternalServerError)
@@ -126,7 +126,7 @@ func (s *server) callback(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	tmplData := map[string]interface{}{
+	tmplData := map[string]any{
 		"access_token": token.AccessToken,
 	}
 
