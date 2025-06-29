@@ -192,23 +192,6 @@ func (p *Provider) VerifyToken(ctx context.Context, rawJWT string, opts *jwt.Val
 	opts.IgnoreIssuer = false
 	opts.ExpectedIssuer = &p.Metadata.Issuer
 
-	if p.OverrideHandle != nil {
-		// handle is overridden, fetch and use it
-		h, err := p.OverrideHandle.PublicHandle(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("getting handle: %w", err)
-		}
-		return p.verifyWithHandle(h, rawJWT, opts)
-	}
-	if p.lastHandle != nil {
-		// we have a cached handle, try it first to shortcut any fetch.
-		if v, err := p.verifyWithHandle(p.lastHandle, rawJWT, opts); err != nil {
-			return v, err
-		}
-	}
-
-	// we don't have a cached handle, or the token did not validate with it. Run
-	// through the normal fetch option, to refresh if we're due.
 	h, err := p.PublicHandle(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting handle: %w", err)
