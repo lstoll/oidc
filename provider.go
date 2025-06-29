@@ -322,9 +322,10 @@ func (p *Provider) Userinfo(ctx context.Context, tokenSource oauth2.TokenSource)
 		return nil, nil, fmt.Errorf("provider does not have a userinfo endpoint")
 	}
 
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, p.getHTTPClient())
 	oc := oauth2.NewClient(ctx, tokenSource)
 
-	req, err := http.NewRequest("GET", p.Metadata.UserinfoEndpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", p.Metadata.UserinfoEndpoint, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error creating identity fetch request: %v", err)
 	}
