@@ -135,8 +135,8 @@ func (c *cliTokenSource) Token() (*oauth2.Token, error) {
 
 	mux := http.NewServeMux()
 
-	var calls int32
-	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+	var calls atomic.Uint32
+	mux.HandleFunc("GET /callback", func(w http.ResponseWriter, r *http.Request) {
 		if errMsg := r.FormValue("error"); errMsg != "" {
 			err := fmt.Errorf("%s: %s", errMsg, r.FormValue("error_description"))
 			resultCh <- result{err: err}
@@ -166,7 +166,7 @@ func (c *cliTokenSource) Token() (*oauth2.Token, error) {
 			return
 		}
 
-		if atomic.AddInt32(&calls, 1) > 1 {
+		if calls.Add(1) > 1 {
 			// Callback has been invoked multiple times, which should not happen.
 			// Bomb out to avoid a blocking channel write and to float this as a bug.
 			w.WriteHeader(http.StatusBadRequest)

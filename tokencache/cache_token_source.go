@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"golang.org/x/oauth2"
 )
+
+var DefaultEarlyExpiry = 30 * time.Second
 
 type Config struct {
 	// Issuer is the OIDC issuer, or other unique URL representing the OAuth2
@@ -27,6 +30,10 @@ type Config struct {
 	OAuth2Config *oauth2.Config
 	// Cache to use for caching the retrieved tokens.
 	Cache CredentialCache
+	// EarlyExpiry is the amount of time before the tokens expiration we will
+	// consider it expired, and refresh it. Defaults to DefaultEarlyExpiry, set
+	// to a negative value to disable.
+	EarlyExpiry time.Duration
 }
 
 type oauth2Config interface {
@@ -77,8 +84,15 @@ func (c *cachingTokenSource) Token() (*oauth2.Token, error) {
 		return nil, fmt.Errorf("cache get: %v", err)
 	}
 
+	earlyExpiry := c.cfg.EarlyExpiry
+	if earlyExpiry == 0 {
+		earlyExpiry = DefaultEarlyExpiry
+	} else if earlyExpiry < 0 {
+		earlyExpiry = 0
+	}
+
 	var newToken *oauth2.Token
-	if token != nil && token.Valid() {
+	if token != nil && token.Valid() && time.Until(token.Expiry) > earlyExpiry {
 		return token, nil
 	} else if c.o2cfg != nil && token != nil && token.RefreshToken != "" {
 		// we have an expired token, try and refresh if we can.

@@ -73,8 +73,8 @@ func (c *Cookiestore) GetOIDCSession(r *http.Request) (*SessionData, error) {
 
 	// Reconstruct login states from individual cookies
 	for _, cookie := range r.Cookies() {
-		if strings.HasPrefix(cookie.Name, opts.LoginStateCookiePrefix) {
-			state := strings.TrimPrefix(cookie.Name, opts.LoginStateCookiePrefix)
+		if after, ok := strings.CutPrefix(cookie.Name, opts.LoginStateCookiePrefix); ok {
+			state := after
 			if state == "" {
 				continue // Should not happen with a proper prefix
 			}
@@ -160,8 +160,8 @@ func (c *Cookiestore) SaveOIDCSession(w http.ResponseWriter, r *http.Request, d 
 
 	// Iterate through existing cookies to update or delete
 	for _, cookie := range r.Cookies() {
-		if strings.HasPrefix(cookie.Name, c.getCookieOpts().LoginStateCookiePrefix) {
-			state := strings.TrimPrefix(cookie.Name, c.getCookieOpts().LoginStateCookiePrefix)
+		if after, ok := strings.CutPrefix(cookie.Name, c.getCookieOpts().LoginStateCookiePrefix); ok {
+			state := after
 			if _, isActive := activeLoginStates[state]; !isActive {
 				// This state is no longer active or was truncated, delete its cookie
 				_ = setCookieIfNotSet(w, r, c.newLoginStateCookie(state, "", "", 0))

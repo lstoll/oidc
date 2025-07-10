@@ -102,7 +102,6 @@ func testCache(t *testing.T, cache tokencache.CredentialCache) {
 			want: nil,
 		},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := tc.run(cache)
 			if err != nil {
