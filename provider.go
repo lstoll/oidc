@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lstoll/oidc/claims"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 	"golang.org/x/oauth2"
@@ -216,6 +217,8 @@ func (p *Provider) verifyWithHandle(h *keyset.Handle, raw string, opts *jwt.Vali
 	return jwt, nil
 }
 
+const typJWTAccessToken = "at+jwt"
+
 // AccessTokenValidationOpts configures the validation of an OAuth2 JWT Access Token
 type AccessTokenValidationOpts struct {
 	Audience       string
@@ -234,9 +237,9 @@ type AccessTokenValidationOpts struct {
 // successful, the verified token and standard claims associated with it will be
 // returned. Options should either have an audience specified, or have audience
 // validation opted out of.
-func (p *Provider) VerifyAccessToken(ctx context.Context, tok *oauth2.Token, opts AccessTokenValidationOpts) (*jwt.VerifiedJWT, *AccessTokenClaims, error) {
+func (p *Provider) VerifyAccessToken(ctx context.Context, tok *oauth2.Token, opts AccessTokenValidationOpts) (*jwt.VerifiedJWT, error) {
 	if opts.Audience == "" && !opts.IgnoreAudience {
-		return nil, nil, fmt.Errorf("audience missing from validation opts")
+		return nil, fmt.Errorf("audience missing from validation opts")
 	}
 
 	vopts := &jwt.ValidatorOpts{
@@ -252,22 +255,25 @@ func (p *Provider) VerifyAccessToken(ctx context.Context, tok *oauth2.Token, opt
 
 	verified, err := p.VerifyToken(ctx, tok.AccessToken, vopts)
 	if err != nil {
-		return nil, nil, err
+		return nil, fmt.Errorf("verifying access token: %w", err)
 	}
 
-	atc, err := AccessTokenClaimsFromJWT(verified)
-	if err != nil {
-		return nil, nil, fmt.Errorf("loading claims from JWT: %w", err)
+	if len(opts.ACRValues) > 0 {
+		if !verified.HasStringClaim("acr") {
+			return nil, fmt.Errorf("token missing acr claim")
+		}
+		acr, err := verified.StringClaim("acr")
+		if err != nil {
+			return nil, fmt.Errorf("getting acr claim: %w", err)
+		}
+		if !slices.Contains(opts.ACRValues, acr) {
+			return nil, fmt.Errorf("token acr %q not in acceptable list", acr)
+		}
 	}
-
-	if len(opts.ACRValues) > 0 && !slices.Contains(opts.ACRValues, atc.ACR) {
-		return nil, nil, fmt.Errorf("token ACR %q can not satisfy required ACRs [%v]", atc.ACR, opts.ACRValues)
-	}
-
-	return verified, atc, nil
+	return verified, nil
 }
 
-// IDTokenValidationOpts configures the validation of an OIDC ID token
+// IDTokenValidationOpts configures the validation of an OIDC ID Token
 type IDTokenValidationOpts struct {
 	// Audience claim to expect in the ID token. Often corresponds to the Client
 	// ID
@@ -279,18 +285,16 @@ type IDTokenValidationOpts struct {
 	ACRValues []string
 }
 
-// VerifyIDToken verifies an OIDC ID token issued by this provider. If
-// successful, the verified token and standard claims associated with it will be
-// returned. Options should either have an audience specified, or have audience
-// validation opted out of.
-func (p *Provider) VerifyIDToken(ctx context.Context, tok *oauth2.Token, opts IDTokenValidationOpts) (*jwt.VerifiedJWT, *IDClaims, error) {
-	idt, ok := GetIDToken(tok)
+// VerifyIDToken verifies the ID token part of an oauth2 token. In most cases,
+// this will be extracted from the `id_token` field of the token, but this can
+// also be from the access token itself if the provider returns a JWT access
+// token that is also a valid ID token.
+func (p *Provider) VerifyIDToken(ctx context.Context, tok *oauth2.Token, opts IDTokenValidationOpts) (*jwt.VerifiedJWT, error) {
+	idToken, ok := tok.Extra("id_token").(string)
 	if !ok {
-		return nil, nil, fmt.Errorf("token does not contain an ID token")
-	}
-
-	if opts.Audience == "" && !opts.IgnoreAudience {
-		return nil, nil, fmt.Errorf("audience missing from validation opts")
+		// some providers (such as Azure), may not return an id_token, but the
+		// access token is a JWT that can be used as one.
+		idToken = tok.AccessToken
 	}
 
 	vopts := &jwt.ValidatorOpts{
@@ -298,76 +302,63 @@ func (p *Provider) VerifyIDToken(ctx context.Context, tok *oauth2.Token, opts ID
 		IgnoreAudiences:  opts.IgnoreAudience,
 	}
 
-	verified, err := p.VerifyToken(ctx, idt, vopts)
+	verified, err := p.VerifyToken(ctx, idToken, vopts)
 	if err != nil {
-		return nil, nil, err
+		return nil, fmt.Errorf("verifying id_token: %w", err)
 	}
 
-	idc, err := IDClaimsFromJWT(verified)
-	if err != nil {
-		return nil, nil, fmt.Errorf("loading claims from JWT: %w", err)
+	if len(opts.ACRValues) > 0 {
+		if !verified.HasStringClaim("acr") {
+			return nil, fmt.Errorf("token missing acr claim")
+		}
+		acr, err := verified.StringClaim("acr")
+		if err != nil {
+			return nil, fmt.Errorf("getting acr claim: %w", err)
+		}
+		if !slices.Contains(opts.ACRValues, acr) {
+			return nil, fmt.Errorf("token acr %q not in acceptable list", acr)
+		}
 	}
 
-	if len(opts.ACRValues) > 0 && !slices.Contains(opts.ACRValues, idc.ACR) {
-		return nil, nil, fmt.Errorf("token ACR %q can not satisfy required ACRs [%v]", idc.ACR, opts.ACRValues)
-	}
-
-	return verified, idc, nil
+	return verified, nil
 }
 
-// Userinfo calls the OIDC userinfo endpoint with the given credentials,
-// returning the raw JSON response and parsed standard ID claims from this.
-func (p *Provider) Userinfo(ctx context.Context, tokenSource oauth2.TokenSource) ([]byte, *IDClaims, error) {
+// Userinfo will use the token source to query the userinfo endpoint of the
+// provider. It will return the raw response, and the parsed ID claims.
+func (p *Provider) Userinfo(ctx context.Context, tokenSource oauth2.TokenSource) ([]byte, *claims.RawIDClaims, error) {
 	if p.Metadata.UserinfoEndpoint == "" {
-		return nil, nil, fmt.Errorf("provider does not have a userinfo endpoint")
+		return nil, nil, fmt.Errorf("provider does not support userinfo endpoint")
 	}
 
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, p.getHTTPClient())
-	oc := oauth2.NewClient(ctx, tokenSource)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", p.Metadata.UserinfoEndpoint, nil)
+	client := oauth2.NewClient(ctx, tokenSource)
+	res, err := client.Get(p.Metadata.UserinfoEndpoint)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error creating identity fetch request: %v", err)
+		return nil, nil, fmt.Errorf("getting userinfo: %w", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("userinfo request failed with code %d", res.StatusCode)
 	}
 
-	resp, err := oc.Do(req)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error making identity request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, nil, fmt.Errorf("authentication to userinfo endpoint failed")
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, nil, fmt.Errorf("bad response from server: http %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("reading userinfo response: %w", err)
 	}
 
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, nil, fmt.Errorf("reading userinfo response body: %w", err)
+	var cl claims.RawIDClaims
+	if err := json.Unmarshal(body, &cl); err != nil {
+		return nil, nil, fmt.Errorf("unmarshalling userinfo: %w", err)
 	}
 
-	var cl IDClaims
-
-	if err := json.Unmarshal(b, &cl); err != nil {
-		return nil, nil, fmt.Errorf("failed decoding response body: %v", err)
-	}
-
-	// TODO(lstoll) the caller should do this, but is there a way we can as well?
-	//
-	// make sure the returned userinfo subject matches the token, to prevent
-	// token substitution attacks
-	// https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse
-
-	return b, &cl, nil
+	return body, &cl, nil
 }
 
 func (p *Provider) getHTTPClient() *http.Client {
-	if p.HTTPClient != nil {
-		return p.HTTPClient
+	if p.HTTPClient == nil {
+		return http.DefaultClient
 	}
-	return http.DefaultClient
+	return p.HTTPClient
 }
 
 type staticPublicHandle struct {
@@ -378,9 +369,18 @@ func (s *staticPublicHandle) PublicHandle(context.Context) (*keyset.Handle, erro
 	return s.h, nil
 }
 
-// NewStaticPublicHandle creates a PublicHandle from a fixed keyset Handle. This
-// handle is used for JWT verification, so must be for a JWT type and contain
-// the public keys only.
 func NewStaticPublicHandle(h *keyset.Handle) PublicHandle {
 	return &staticPublicHandle{h: h}
+}
+
+func ptr[T any](v T) *T {
+	return &v
+}
+
+func ptrOrNil[T comparable](v T) *T {
+	var e T
+	if v == e {
+		return nil
+	}
+	return &v
 }

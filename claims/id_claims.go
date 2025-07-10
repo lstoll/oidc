@@ -2,7 +2,6 @@ package claims
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -11,11 +10,11 @@ import (
 	"github.com/tink-crypto/tink-go/v2/jwt"
 )
 
-// IDClaims represents the set of JWT claims for a user ID Token, or userinfo
+// RawIDClaims represents the set of JWT claims for a user ID Token, or userinfo
 // endpoint.
 //
 // https://openid.net/specs/openid-connect-core-1_0.html#IDClaims
-type IDClaims struct {
+type RawIDClaims struct {
 	// REQUIRED. Issuer Identifier for the Issuer of the response. The iss value
 	// is a case sensitive URL using the https scheme that contains scheme,
 	// host, and optionally, port number and path components and no query or
@@ -102,7 +101,7 @@ type IDClaims struct {
 	Extra map[string]any `json:"-"`
 }
 
-func (i *IDClaims) MarshalJSON() ([]byte, error) {
+func (i *RawIDClaims) MarshalJSON() ([]byte, error) {
 	// Get all the json tags from the struct to check for conflicts
 	tags := make(map[string]struct{})
 	val := reflect.TypeOf(*i)
@@ -124,7 +123,7 @@ func (i *IDClaims) MarshalJSON() ([]byte, error) {
 		}
 	}
 
-	type alias IDClaims
+	type alias RawIDClaims
 	b, err := json.Marshal(alias(*i)) // use alias to prevent recursion
 	if err != nil {
 		return nil, err
@@ -142,8 +141,8 @@ func (i *IDClaims) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-func (i *IDClaims) UnmarshalJSON(b []byte) error {
-	type alias IDClaims
+func (i *RawIDClaims) UnmarshalJSON(b []byte) error {
+	type alias RawIDClaims
 	if err := json.Unmarshal(b, (*alias)(i)); err != nil {
 		return err
 	}
@@ -177,15 +176,15 @@ func (i *IDClaims) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (i *IDClaims) setExtra(extra map[string]any) {
+func (i *RawIDClaims) setExtra(extra map[string]any) {
 	i.Extra = extra
 }
 
-func (i *IDClaims) getExtra() map[string]any {
+func (i *RawIDClaims) getExtra() map[string]any {
 	return i.Extra
 }
 
-func (i *IDClaims) String() string {
+func (i *RawIDClaims) String() string {
 	m, err := json.Marshal(i)
 	if err != nil {
 		return fmt.Sprintf("sub: %s failed: %v", i.Subject, err)
@@ -194,7 +193,7 @@ func (i *IDClaims) String() string {
 	return string(m)
 }
 
-func (i *IDClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
+func (i *RawIDClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
 	var exp *time.Time
 	if i.Expiry != 0 {
 		t := i.Expiry.Time()
@@ -212,38 +211,46 @@ func (i *IDClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
 	}
 
 	opts := &jwt.RawJWTOptions{
-		Issuer:       ptrOrNil(i.Issuer),
-		Subject:      ptrOrNil(i.Subject),
-		Audiences:    i.Audience,
-		ExpiresAt:    exp,
-		NotBefore:    nbf,
-		IssuedAt:     iat,
-		CustomClaims: make(map[string]any),
+		Issuer:    ptrOrNil(i.Issuer),
+		Subject:   ptrOrNil(i.Subject),
+		Audiences: i.Audience,
+		ExpiresAt: exp,
+		NotBefore: nbf,
+		IssuedAt:  iat,
 	}
+	// Use a temp map to not modify the CustomClaims map directly
+	customClaims := make(map[string]any)
+
 	if i.AuthTime != 0 {
-		opts.CustomClaims["auth_time"] = int(i.AuthTime)
+		customClaims["auth_time"] = int(i.AuthTime)
 	}
 	if i.Nonce != "" {
-		opts.CustomClaims["nonce"] = i.Nonce
+		customClaims["nonce"] = i.Nonce
 	}
 	if i.ACR != "" {
-		opts.CustomClaims["acr"] = i.ACR
+		customClaims["acr"] = i.ACR
 	}
 	if i.AMR != nil {
-		opts.CustomClaims["amr"] = sliceToAnySlice(i.AMR)
+		customClaims["amr"] = sliceToAnySlice(i.AMR)
 	}
 	if i.AZP != "" {
-		opts.CustomClaims["azp"] = i.AZP
+		customClaims["azp"] = i.AZP
 	}
 	if len(i.Extra) > 0 {
-		opts.CustomClaims["extra_claims"] = i.Extra
+		for k, v := range i.Extra {
+			if _, ok := customClaims[k]; ok {
+				return nil, fmt.Errorf("duplicate/reserved claim %s", k)
+			}
+			customClaims[k] = v
+		}
 	}
 	for k, v := range extraClaims {
-		if _, ok := opts.CustomClaims[k]; ok {
+		if _, ok := customClaims[k]; ok {
 			return nil, fmt.Errorf("duplicate/reserved claim %s", k)
 		}
-		opts.CustomClaims[k] = v
+		customClaims[k] = v
 	}
+	opts.CustomClaims = customClaims
 
 	raw, err := jwt.NewRawJWT(opts)
 	if err != nil {
@@ -251,102 +258,4 @@ func (i *IDClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
 	}
 
 	return raw, nil
-}
-
-func IDClaimsFromJWT(verified *jwt.VerifiedJWT) (*IDClaims, error) {
-	c := new(IDClaims)
-	var errs error
-	if verified.HasIssuer() {
-		v, err := verified.Issuer()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Issuer = v
-	}
-	if verified.HasSubject() {
-		v, err := verified.Subject()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Subject = v
-	}
-	if verified.HasAudiences() {
-		v, err := verified.Audiences()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Audience = StrOrSlice(v)
-	}
-	if verified.HasExpiration() {
-		v, err := verified.ExpiresAt()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Expiry = UnixTime(v.Unix())
-	}
-	if verified.HasNotBefore() {
-		v, err := verified.NotBefore()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.NotBefore = UnixTime(v.Unix())
-	}
-	if verified.HasIssuedAt() {
-		v, err := verified.IssuedAt()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.IssuedAt = UnixTime(v.Unix())
-	}
-	if verified.HasNumberClaim("auth_time") {
-		v, err := verified.NumberClaim("auth_time")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.AuthTime = UnixTime(v)
-	}
-	if verified.HasStringClaim("nonce") {
-		v, err := verified.StringClaim("nonce")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Nonce = v
-	}
-	if verified.HasStringClaim("acr") {
-		v, err := verified.StringClaim("acr")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.ACR = v
-	}
-	if verified.HasArrayClaim("amr") {
-		v, err := verified.ArrayClaim("amr")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		sv, err := anySliceToSlice[string](v)
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.AMR = sv
-	}
-	if verified.HasStringClaim("azp") {
-		v, err := verified.StringClaim("azp")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.AZP = v
-	}
-	if verified.HasObjectClaim("extra_claims") {
-		extra, err := verified.ObjectClaim("extra_claims")
-		if err != nil {
-			errs = errors.Join(errs, fmt.Errorf("parsing extra_claims: %w", err))
-		} else {
-			c.Extra = extra
-		}
-	}
-	if errs != nil {
-		return nil, errs
-	}
-	return c, nil
 }

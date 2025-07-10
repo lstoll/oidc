@@ -1,34 +1,15 @@
 package claims
 
 import (
+	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/tink-crypto/tink-go/v2/jwt"
-	"github.com/tink-crypto/tink-go/v2/keyset"
 )
 
-func TestIDClaims_Roundtrip(t *testing.T) {
-	kh, err := keyset.NewHandle(jwt.HS256Template())
-	if err != nil {
-		t.Fatal(err)
-	}
-	mac, err := jwt.NewMAC(kh)
-	if err != nil {
-		t.Fatal(err)
-	}
-	validator, err := jwt.NewValidator(&jwt.ValidatorOpts{
-		ExpectedIssuer:         ptr("issuer"),
-		FixedNow:               time.Now(),
-		AllowMissingExpiration: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	want := &IDClaims{}
+func TestRawIDClaims_Roundtrip(t *testing.T) {
+	want := &RawIDClaims{}
 	fillStructWithRandomData(want, nil)
 	want.Extra = map[string]any{
 		"a": "b",
@@ -39,34 +20,40 @@ func TestIDClaims_Roundtrip(t *testing.T) {
 			"g": "h",
 		},
 	}
-	// The random filler can put in an issuer, but we need a specific one for the
-	// validator.
-	want.Issuer = "issuer"
-	want.Expiry = UnixTime(time.Now().Add(time.Hour).Unix())
-	want.NotBefore = UnixTime(time.Now().Add(-time.Hour).Unix())
-	want.Audience = nil
+	// The audience has a custom marshaller that will make a single entry array
+	// a string, so for a round trip test we need to either make it a single
+	// entry, or a multi entry array.
+	want.Audience = []string{"a"}
 
-	raw, err := want.ToJWT(nil)
+	// Test that ToRawJWT preserves all the claims.
+	rawJWT, err := want.ToRawJWT(nil)
 	if err != nil {
-		t.Fatalf("ToJWT() error = %v", err)
+		t.Fatalf("ToRawJWT() error = %v", err)
+	}
+	jsonPayload, err := rawJWT.JSONPayload()
+	if err != nil {
+		t.Fatalf("rawJWT.JSONPayload() error = %v", err)
 	}
 
-	compact, err := mac.ComputeMACAndEncode(raw)
-	if err != nil {
-		t.Fatalf("jwt.Sign() error = %v", err)
+	got := &RawIDClaims{}
+	if err := json.Unmarshal(jsonPayload, got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 
-	verified, err := mac.VerifyMACAndDecode(compact, validator)
-	if err != nil {
-		t.Fatalf("jwt.Verify() error = %v", err)
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(RawIDClaims{})); diff != "" {
+		t.Errorf("ToRawJWT() mismatch (-want +got):\n%s", diff)
 	}
 
-	got, err := IDClaimsFromJWT(verified)
+	// Test that marshalling and unmarshalling the struct directly also works.
+	jsonData, err := json.Marshal(want)
 	if err != nil {
-		t.Fatalf("IDClaimsFromJWT() error = %v", err)
+		t.Fatalf("json.Marshal() error = %v", err)
 	}
-
-	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(IDClaims{})); diff != "" {
-		t.Errorf("IDClaimsFromJWT() mismatch (-want +got):\n%s", diff)
+	got2 := &RawIDClaims{}
+	if err := json.Unmarshal(jsonData, got2); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if diff := cmp.Diff(want, got2, cmpopts.IgnoreUnexported(RawIDClaims{})); diff != "" {
+		t.Errorf("JSON Marshal/Unmarshal mismatch (-want +got):\n%s", diff)
 	}
 }

@@ -2,7 +2,6 @@ package claims
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -11,11 +10,11 @@ import (
 	"github.com/tink-crypto/tink-go/v2/jwt"
 )
 
-// AccessTokenClaims represents the set of JWT claims for an OAuth2 JWT Access
+// RawAccessTokenClaims represents the set of JWT claims for an OAuth2 JWT Access
 // token.
 //
 // https://datatracker.ietf.org/doc/html/rfc9068
-type AccessTokenClaims struct {
+type RawAccessTokenClaims struct {
 	// REQUIRED. https://www.rfc-editor.org/rfc/rfc7519#section-4.1.1
 	Issuer string `json:"iss,omitempty"`
 	// REQUIRED. https://www.rfc-editor.org/rfc/rfc7519#section-4.1.4
@@ -98,7 +97,7 @@ type AccessTokenClaims struct {
 	Extra map[string]any `json:"-"`
 }
 
-func (a *AccessTokenClaims) MarshalJSON() ([]byte, error) {
+func (a *RawAccessTokenClaims) MarshalJSON() ([]byte, error) {
 	// Get all the json tags from the struct to check for conflicts
 	tags := make(map[string]struct{})
 	val := reflect.TypeOf(*a)
@@ -120,7 +119,7 @@ func (a *AccessTokenClaims) MarshalJSON() ([]byte, error) {
 		}
 	}
 
-	type alias AccessTokenClaims
+	type alias RawAccessTokenClaims
 	b, err := json.Marshal(alias(*a)) // use alias to prevent recursion
 	if err != nil {
 		return nil, err
@@ -138,8 +137,8 @@ func (a *AccessTokenClaims) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-func (a *AccessTokenClaims) UnmarshalJSON(b []byte) error {
-	type alias AccessTokenClaims
+func (a *RawAccessTokenClaims) UnmarshalJSON(b []byte) error {
+	type alias RawAccessTokenClaims
 	if err := json.Unmarshal(b, (*alias)(a)); err != nil {
 		return err
 	}
@@ -173,7 +172,7 @@ func (a *AccessTokenClaims) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (a *AccessTokenClaims) String() string {
+func (a *RawAccessTokenClaims) String() string {
 	m, err := json.Marshal(a)
 	if err != nil {
 		return fmt.Sprintf("sub: %s failed: %v", a.Subject, err)
@@ -182,7 +181,7 @@ func (a *AccessTokenClaims) String() string {
 	return string(m)
 }
 
-func (a *AccessTokenClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
+func (a *RawAccessTokenClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
 	var exp *time.Time
 	if a.Expiry != 0 {
 		t := a.Expiry.Time()
@@ -195,48 +194,57 @@ func (a *AccessTokenClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, erro
 	}
 
 	opts := &jwt.RawJWTOptions{
-		TypeHeader:   ptr(typJWTAccessToken),
-		Issuer:       ptrOrNil(a.Issuer),
-		Subject:      ptrOrNil(a.Subject),
-		Audiences:    a.Audience,
-		ExpiresAt:    exp,
-		JWTID:        ptrOrNil(a.JWTID),
-		IssuedAt:     iat,
-		CustomClaims: make(map[string]any),
+		TypeHeader: ptr(typJWTAccessToken),
+		Issuer:     ptrOrNil(a.Issuer),
+		Subject:    ptrOrNil(a.Subject),
+		Audiences:  a.Audience,
+		ExpiresAt:  exp,
+		JWTID:      ptrOrNil(a.JWTID),
+		IssuedAt:   iat,
 	}
+
+	// Use a temp map to not modify the CustomClaims map directly
+	customClaims := make(map[string]any)
+
 	if a.Scope != "" {
-		opts.CustomClaims["scope"] = a.Scope
+		customClaims["scope"] = a.Scope
 	}
 	if a.ClientID != "" {
-		opts.CustomClaims["client_id"] = a.ClientID
+		customClaims["client_id"] = a.ClientID
 	}
 	if a.AuthTime != 0 {
-		opts.CustomClaims["auth_time"] = int(a.AuthTime)
+		customClaims["auth_time"] = int(a.AuthTime)
 	}
 	if a.ACR != "" {
-		opts.CustomClaims["acr"] = a.ACR
+		customClaims["acr"] = a.ACR
 	}
 	if a.AMR != nil {
-		opts.CustomClaims["amr"] = sliceToAnySlice(a.AMR)
+		customClaims["amr"] = sliceToAnySlice(a.AMR)
 	}
 	if a.Groups != nil {
-		opts.CustomClaims["groups"] = sliceToAnySlice(a.Groups)
+		customClaims["groups"] = sliceToAnySlice(a.Groups)
 	}
-	if a.Groups != nil {
-		opts.CustomClaims["roles"] = sliceToAnySlice(a.Roles)
+	if a.Roles != nil {
+		customClaims["roles"] = sliceToAnySlice(a.Roles)
 	}
 	if a.Entitlements != nil {
-		opts.CustomClaims["entitlements"] = sliceToAnySlice(a.Entitlements)
+		customClaims["entitlements"] = sliceToAnySlice(a.Entitlements)
 	}
 	if len(a.Extra) > 0 {
-		opts.CustomClaims["extra_claims"] = a.Extra
+		for k, v := range a.Extra {
+			if _, ok := customClaims[k]; ok {
+				return nil, fmt.Errorf("duplicate/reserved claim %s", k)
+			}
+			customClaims[k] = v
+		}
 	}
 	for k, v := range extraClaims {
-		if _, ok := opts.CustomClaims[k]; ok {
+		if _, ok := customClaims[k]; ok {
 			return nil, fmt.Errorf("duplicate/reserved claim %s", k)
 		}
-		opts.CustomClaims[k] = v
+		customClaims[k] = v
 	}
+	opts.CustomClaims = customClaims
 
 	raw, err := jwt.NewRawJWT(opts)
 	if err != nil {
@@ -244,137 +252,4 @@ func (a *AccessTokenClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, erro
 	}
 
 	return raw, nil
-}
-
-func AccessTokenClaimsFromJWT(verified *jwt.VerifiedJWT) (*AccessTokenClaims, error) {
-	c := new(AccessTokenClaims)
-	var errs error
-	if verified.HasIssuer() {
-		v, err := verified.Issuer()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Issuer = v
-	}
-	if verified.HasSubject() {
-		v, err := verified.Subject()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Subject = v
-	}
-	if verified.HasAudiences() {
-		v, err := verified.Audiences()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Audience = StrOrSlice(v)
-	}
-	if verified.HasExpiration() {
-		v, err := verified.ExpiresAt()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Expiry = UnixTime(v.Unix())
-	}
-	if verified.HasIssuedAt() {
-		v, err := verified.IssuedAt()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.IssuedAt = UnixTime(v.Unix())
-	}
-	if verified.HasJWTID() {
-		v, err := verified.JWTID()
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.JWTID = v
-	}
-
-	if verified.HasStringClaim("client_id") {
-		v, err := verified.StringClaim("client_id")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.ClientID = v
-	}
-	if verified.HasStringClaim("scope") {
-		v, err := verified.StringClaim("scope")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Scope = v
-	}
-	if verified.HasNumberClaim("auth_time") {
-		v, err := verified.NumberClaim("auth_time")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.AuthTime = UnixTime(v)
-	}
-	if verified.HasStringClaim("acr") {
-		v, err := verified.StringClaim("acr")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.ACR = v
-	}
-	if verified.HasArrayClaim("amr") {
-		v, err := verified.ArrayClaim("amr")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		sv, err := anySliceToSlice[string](v)
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.AMR = sv
-	}
-	if verified.HasArrayClaim("groups") {
-		v, err := verified.ArrayClaim("groups")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		sv, err := anySliceToSlice[string](v)
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Groups = sv
-	}
-	if verified.HasArrayClaim("roles") {
-		v, err := verified.ArrayClaim("roles")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		sv, err := anySliceToSlice[string](v)
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Roles = sv
-	}
-	if verified.HasArrayClaim("entitlements") {
-		v, err := verified.ArrayClaim("entitlements")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		sv, err := anySliceToSlice[string](v)
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Entitlements = sv
-	}
-
-	if verified.HasObjectClaim("extra_claims") {
-		extra, err := verified.ObjectClaim("extra_claims")
-		if err != nil {
-			errs = errors.Join(errs, fmt.Errorf("parsing extra_claims: %w", err))
-		} else {
-			c.Extra = extra
-		}
-	}
-	if errs != nil {
-		return nil, errs
-	}
-	return c, nil
 }
