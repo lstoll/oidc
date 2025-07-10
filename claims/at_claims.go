@@ -10,6 +10,11 @@ import (
 	"github.com/tink-crypto/tink-go/v2/jwt"
 )
 
+// JWTTYPAccessToken is the type header for OAuth2 JWT Access tokens.
+//
+// https://datatracker.ietf.org/doc/html/rfc9068#name-header
+const JWTTYPAccessToken = "at+jwt"
+
 // RawAccessTokenClaims represents the set of JWT claims for an OAuth2 JWT Access
 // token.
 //
@@ -194,7 +199,7 @@ func (a *RawAccessTokenClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT
 	}
 
 	opts := &jwt.RawJWTOptions{
-		TypeHeader: ptr(typJWTAccessToken),
+		TypeHeader: ptr(JWTTYPAccessToken),
 		Issuer:     ptrOrNil(a.Issuer),
 		Subject:    ptrOrNil(a.Subject),
 		Audiences:  a.Audience,
@@ -251,5 +256,114 @@ func (a *RawAccessTokenClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT
 		return nil, fmt.Errorf("constructing raw JWT from claims: %w", err)
 	}
 
-	return raw, nil
+	return raw, err
+}
+
+// VerifiedAccessToken is a wrapper around a VerifiedJWT that provides accessors
+// for the standard claims in an access token.
+type VerifiedAccessToken struct {
+	*jwt.VerifiedJWT
+}
+
+// HasClientID returns true if the "client_id" claim is present.
+func (v *VerifiedAccessToken) HasClientID() bool {
+	return v.HasStringClaim("client_id")
+}
+
+// ClientID returns the client_id claim from the access token.
+func (v *VerifiedAccessToken) ClientID() (string, error) {
+	return v.StringClaim("client_id")
+}
+
+// HasAuthTime returns true if the "auth_time" claim is present.
+func (v *VerifiedAccessToken) HasAuthTime() bool {
+	return v.HasNumberClaim("auth_time")
+}
+
+// AuthTime returns the time when the End-User authentication occurred.
+func (v *VerifiedAccessToken) AuthTime() (time.Time, error) {
+	authTime, err := v.NumberClaim("auth_time")
+	if err != nil {
+		return time.Time{}, fmt.Errorf("getting auth_time: %w", err)
+	}
+
+	return time.Unix(int64(authTime), 0), nil
+}
+
+// HasACR returns true if the "acr" claim is present.
+func (v *VerifiedAccessToken) HasACR() bool {
+	return v.HasStringClaim("acr")
+}
+
+// ACR returns the Authentication Context Class Reference.
+func (v *VerifiedAccessToken) ACR() (string, error) {
+	return v.StringClaim("acr")
+}
+
+// HasAMR returns true if the "amr" claim is present.
+func (v *VerifiedAccessToken) HasAMR() bool {
+	return v.HasArrayClaim("amr")
+}
+
+// AMR returns the Authentication Methods References.
+func (v *VerifiedAccessToken) AMR() ([]string, error) {
+	return v.stringSliceClaim("amr")
+}
+
+// HasScope returns true if the "scope" claim is present.
+func (v *VerifiedAccessToken) HasScope() bool {
+	return v.HasStringClaim("scope")
+}
+
+// Scope returns the scope claim from the access token.
+func (v *VerifiedAccessToken) Scope() (string, error) {
+	return v.StringClaim("scope")
+}
+
+// HasGroups returns true if the "groups" claim is present.
+func (v *VerifiedAccessToken) HasGroups() bool {
+	return v.HasArrayClaim("groups")
+}
+
+// Groups returns the groups claim from the access token.
+func (v *VerifiedAccessToken) Groups() ([]string, error) {
+	return v.stringSliceClaim("groups")
+}
+
+// HasRoles returns true if the "roles" claim is present.
+func (v *VerifiedAccessToken) HasRoles() bool {
+	return v.HasArrayClaim("roles")
+}
+
+// Roles returns the roles claim from the access token.
+func (v *VerifiedAccessToken) Roles() ([]string, error) {
+	return v.stringSliceClaim("roles")
+}
+
+// HasEntitlements returns true if the "entitlements" claim is present.
+func (v *VerifiedAccessToken) HasEntitlements() bool {
+	return v.HasArrayClaim("entitlements")
+}
+
+// Entitlements returns the entitlements claim from the access token.
+func (v *VerifiedAccessToken) Entitlements() ([]string, error) {
+	return v.stringSliceClaim("entitlements")
+}
+
+func (v *VerifiedAccessToken) stringSliceClaim(claimName string) ([]string, error) {
+	claim, err := v.ArrayClaim(claimName)
+	if err != nil {
+		return nil, fmt.Errorf("getting %s: %w", claimName, err)
+	}
+
+	strs := make([]string, len(claim))
+	for i, v := range claim {
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s claim is not a slice of strings", claimName)
+		}
+		strs[i] = s
+	}
+
+	return strs, nil
 }

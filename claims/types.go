@@ -8,9 +8,6 @@ import (
 	"time"
 )
 
-// https://datatracker.ietf.org/doc/html/rfc9068#name-header
-const typJWTAccessToken = "at+jwt"
-
 // StrOrSlice represents a JWT claim that can either be a single string, or a
 // list of strings..
 type StrOrSlice []string

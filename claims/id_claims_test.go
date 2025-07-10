@@ -3,6 +3,7 @@ package claims
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -11,15 +12,11 @@ import (
 func TestRawIDClaims_Roundtrip(t *testing.T) {
 	want := &RawIDClaims{}
 	fillStructWithRandomData(want, nil)
-	want.Extra = map[string]any{
-		"a": "b",
-		"c": float64(1), // numbers are unmarshalled as float64
-		"d": true,
-		"e": []any{"f", "g"},
-		"f": map[string]any{
-			"g": "h",
-		},
-	}
+	// Set time fields to ensure valid tokens
+	now := time.Now()
+	want.Expiry = UnixTime(now.Add(24 * time.Hour).Unix()) // 24 hours in the future
+	want.IssuedAt = UnixTime(now.Unix())
+	want.AuthTime = UnixTime(now.Unix())
 	// The audience has a custom marshaller that will make a single entry array
 	// a string, so for a round trip test we need to either make it a single
 	// entry, or a multi entry array.
@@ -40,7 +37,7 @@ func TestRawIDClaims_Roundtrip(t *testing.T) {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 
-	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(RawIDClaims{})); diff != "" {
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(RawIDClaims{}), cmp.Comparer(equalMapStringAny)); diff != "" {
 		t.Errorf("ToRawJWT() mismatch (-want +got):\n%s", diff)
 	}
 
@@ -53,7 +50,59 @@ func TestRawIDClaims_Roundtrip(t *testing.T) {
 	if err := json.Unmarshal(jsonData, got2); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if diff := cmp.Diff(want, got2, cmpopts.IgnoreUnexported(RawIDClaims{})); diff != "" {
+	if diff := cmp.Diff(want, got2, cmpopts.IgnoreUnexported(RawIDClaims{}), cmp.Comparer(equalMapStringAny)); diff != "" {
 		t.Errorf("JSON Marshal/Unmarshal mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestVerifiedIDClaims(t *testing.T) {
+	ric := &RawIDClaims{}
+	fillStructWithRandomData(ric, nil)
+	// Set time fields to ensure valid tokens
+	now := time.Now()
+	ric.Expiry = UnixTime(now.Add(24 * time.Hour).Unix()) // 24 hours in the future
+	ric.IssuedAt = UnixTime(now.Unix())
+	ric.AuthTime = UnixTime(now.Unix())
+	// The audience has a custom marshaller that will make a single entry array
+	// a string, so for a round trip test we need to either make it a single
+	// entry, or a multi entry array.
+	ric.Audience = []string{"a"}
+
+	verifiedJWT := must(newVerifiedJWT(t, ric, nil))
+	vic := &VerifiedIDClaims{VerifiedJWT: verifiedJWT}
+
+	if !vic.HasAuthTime() {
+		t.Error("HasAuthTime() = false, want true")
+	}
+	if got, err := vic.AuthTime(); err != nil || got.Unix() != int64(ric.AuthTime) {
+		t.Errorf("AuthTime() = %v, %v, want %v", got, err, ric.AuthTime.Time())
+	}
+
+	if !vic.HasNonce() {
+		t.Error("HasNonce() = false, want true")
+	}
+	if got, err := vic.Nonce(); err != nil || got != ric.Nonce {
+		t.Errorf("Nonce() = %v, %v, want %v", got, err, ric.Nonce)
+	}
+
+	if !vic.HasACR() {
+		t.Error("HasACR() = false, want true")
+	}
+	if got, err := vic.ACR(); err != nil || got != ric.ACR {
+		t.Errorf("ACR() = %v, %v, want %v", got, err, ric.ACR)
+	}
+
+	if !vic.HasAMR() {
+		t.Error("HasAMR() = false, want true")
+	}
+	if got, err := vic.AMR(); err != nil || !cmp.Equal(got, ric.AMR) {
+		t.Errorf("AMR() = %v, %v, want %v", got, err, ric.AMR)
+	}
+
+	if !vic.HasAZP() {
+		t.Error("HasAZP() = false, want true")
+	}
+	if got, err := vic.AZP(); err != nil || got != ric.AZP {
+		t.Errorf("AZP() = %v, %v, want %v", got, err, ric.AZP)
 	}
 }

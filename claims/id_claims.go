@@ -176,14 +176,6 @@ func (i *RawIDClaims) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (i *RawIDClaims) setExtra(extra map[string]any) {
-	i.Extra = extra
-}
-
-func (i *RawIDClaims) getExtra() map[string]any {
-	return i.Extra
-}
-
 func (i *RawIDClaims) String() string {
 	m, err := json.Marshal(i)
 	if err != nil {
@@ -257,5 +249,80 @@ func (i *RawIDClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT, error) 
 		return nil, fmt.Errorf("constructing raw JWT from claims: %w", err)
 	}
 
-	return raw, nil
+	return raw, err
+}
+
+// VerifiedIDClaims is a wrapper around a VerifiedJWT that provides accessors for
+// the standard claims in an ID token.
+type VerifiedIDClaims struct {
+	*jwt.VerifiedJWT
+}
+
+// HasAuthTime returns true if the "auth_time" claim is present.
+func (v *VerifiedIDClaims) HasAuthTime() bool {
+	return v.HasNumberClaim("auth_time")
+}
+
+// AuthTime returns the time when the End-User authentication occurred.
+func (v *VerifiedIDClaims) AuthTime() (time.Time, error) {
+	authTime, err := v.NumberClaim("auth_time")
+	if err != nil {
+		return time.Time{}, fmt.Errorf("getting auth_time: %w", err)
+	}
+
+	return time.Unix(int64(authTime), 0), nil
+}
+
+// HasNonce returns true if the "nonce" claim is present.
+func (v *VerifiedIDClaims) HasNonce() bool {
+	return v.HasStringClaim("nonce")
+}
+
+// Nonce returns the nonce value from the ID token.
+func (v *VerifiedIDClaims) Nonce() (string, error) {
+	return v.StringClaim("nonce")
+}
+
+// HasACR returns true if the "acr" claim is present.
+func (v *VerifiedIDClaims) HasACR() bool {
+	return v.HasStringClaim("acr")
+}
+
+// ACR returns the Authentication Context Class Reference.
+func (v *VerifiedIDClaims) ACR() (string, error) {
+	return v.StringClaim("acr")
+}
+
+// HasAMR returns true if the "amr" claim is present.
+func (v *VerifiedIDClaims) HasAMR() bool {
+	return v.HasArrayClaim("amr")
+}
+
+// AMR returns the Authentication Methods References.
+func (v *VerifiedIDClaims) AMR() ([]string, error) {
+	claim, err := v.ArrayClaim("amr")
+	if err != nil {
+		return nil, fmt.Errorf("getting amr: %w", err)
+	}
+
+	strs := make([]string, len(claim))
+	for i, v := range claim {
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("amr claim is not a slice of strings")
+		}
+		strs[i] = s
+	}
+
+	return strs, nil
+}
+
+// HasAZP returns true if the "azp" claim is present.
+func (v *VerifiedIDClaims) HasAZP() bool {
+	return v.HasStringClaim("azp")
+}
+
+// AZP returns the Authorized party.
+func (v *VerifiedIDClaims) AZP() (string, error) {
+	return v.StringClaim("azp")
 }
