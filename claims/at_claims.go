@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/tink-crypto/tink-go/v2/jwt"
@@ -91,6 +93,84 @@ type AccessTokenClaims struct {
 	// https://datatracker.ietf.org/doc/html/rfc9068#section-2.2.3.1 |
 	// https://www.rfc-editor.org/rfc/rfc7643#section-4.1.2
 	Entitlements []string `json:"entitlements,omitempty"`
+	// Extra contains any other claims that are not part of the standard set.
+	// These claims will be marshalled and unmarshalled from the JWT.
+	Extra map[string]any `json:"-"`
+}
+
+func (a *AccessTokenClaims) MarshalJSON() ([]byte, error) {
+	// Get all the json tags from the struct to check for conflicts
+	tags := make(map[string]struct{})
+	val := reflect.TypeOf(*a)
+	for j := 0; j < val.NumField(); j++ {
+		field := val.Field(j)
+		tag := field.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		name := strings.Split(tag, ",")[0]
+		if name != "" {
+			tags[name] = struct{}{}
+		}
+	}
+
+	for k := range a.Extra {
+		if _, ok := tags[k]; ok {
+			return nil, fmt.Errorf("extra claim %q conflicts with standard claim", k)
+		}
+	}
+
+	type alias AccessTokenClaims
+	b, err := json.Marshal(alias(*a)) // use alias to prevent recursion
+	if err != nil {
+		return nil, err
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+
+	for k, v := range a.Extra {
+		m[k] = v
+	}
+
+	return json.Marshal(m)
+}
+
+func (a *AccessTokenClaims) UnmarshalJSON(b []byte) error {
+	type alias AccessTokenClaims
+	if err := json.Unmarshal(b, (*alias)(a)); err != nil {
+		return err
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+
+	// Get all the json tags from the struct to know which fields are standard
+	tags := make(map[string]struct{})
+	val := reflect.TypeOf(*a)
+	for j := 0; j < val.NumField(); j++ {
+		field := val.Field(j)
+		tag := field.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		name := strings.Split(tag, ",")[0]
+		if name != "" {
+			tags[name] = struct{}{}
+		}
+	}
+	a.Extra = make(map[string]any)
+	for k, v := range m {
+		if _, ok := tags[k]; !ok {
+			a.Extra[k] = v
+		}
+	}
+
+	return nil
 }
 
 func (a *AccessTokenClaims) String() string {
@@ -148,6 +228,9 @@ func (a *AccessTokenClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, erro
 	if a.Entitlements != nil {
 		opts.CustomClaims["entitlements"] = sliceToAnySlice(a.Entitlements)
 	}
+	if len(a.Extra) > 0 {
+		opts.CustomClaims["extra_claims"] = a.Extra
+	}
 	for k, v := range extraClaims {
 		if _, ok := opts.CustomClaims[k]; ok {
 			return nil, fmt.Errorf("duplicate/reserved claim %s", k)
@@ -194,6 +277,13 @@ func AccessTokenClaimsFromJWT(verified *jwt.VerifiedJWT) (*AccessTokenClaims, er
 		}
 		c.Expiry = UnixTime(v.Unix())
 	}
+	if verified.HasIssuedAt() {
+		v, err := verified.IssuedAt()
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.IssuedAt = UnixTime(v.Unix())
+	}
 	if verified.HasJWTID() {
 		v, err := verified.JWTID()
 		if err != nil {
@@ -201,12 +291,20 @@ func AccessTokenClaimsFromJWT(verified *jwt.VerifiedJWT) (*AccessTokenClaims, er
 		}
 		c.JWTID = v
 	}
-	if verified.HasIssuedAt() {
-		v, err := verified.IssuedAt()
+
+	if verified.HasStringClaim("client_id") {
+		v, err := verified.StringClaim("client_id")
 		if err != nil {
 			errs = errors.Join(errs, err)
 		}
-		c.IssuedAt = UnixTime(v.Unix())
+		c.ClientID = v
+	}
+	if verified.HasStringClaim("scope") {
+		v, err := verified.StringClaim("scope")
+		if err != nil {
+			errs = errors.Join(errs, err)
+		}
+		c.Scope = v
 	}
 	if verified.HasNumberClaim("auth_time") {
 		v, err := verified.NumberClaim("auth_time")
@@ -232,20 +330,6 @@ func AccessTokenClaimsFromJWT(verified *jwt.VerifiedJWT) (*AccessTokenClaims, er
 			errs = errors.Join(errs, err)
 		}
 		c.AMR = sv
-	}
-	if verified.HasStringClaim("scope") {
-		v, err := verified.StringClaim("scope")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.Scope = v
-	}
-	if verified.HasStringClaim("client_id") {
-		v, err := verified.StringClaim("client_id")
-		if err != nil {
-			errs = errors.Join(errs, err)
-		}
-		c.ClientID = v
 	}
 	if verified.HasArrayClaim("groups") {
 		v, err := verified.ArrayClaim("groups")
@@ -279,6 +363,15 @@ func AccessTokenClaimsFromJWT(verified *jwt.VerifiedJWT) (*AccessTokenClaims, er
 			errs = errors.Join(errs, err)
 		}
 		c.Entitlements = sv
+	}
+
+	if verified.HasObjectClaim("extra_claims") {
+		extra, err := verified.ObjectClaim("extra_claims")
+		if err != nil {
+			errs = errors.Join(errs, fmt.Errorf("parsing extra_claims: %w", err))
+		} else {
+			c.Extra = extra
+		}
 	}
 	if errs != nil {
 		return nil, errs

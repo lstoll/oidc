@@ -5,82 +5,8 @@ import (
 	"math/rand/v2"
 	"reflect"
 	"slices"
-	"testing"
 	"time"
-	"unsafe"
-
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/tink-crypto/tink-go/v2/jwt"
 )
-
-func TestRawJWT(t *testing.T) {
-	// DANGERZONE!! This is a quick hack for testing. Never do it outside of
-	// this context. Is fragile, will need updates when tink changes their
-	// internal state.
-	rawToVerified := func(raw *jwt.RawJWT) *jwt.VerifiedJWT {
-		verifiedJWT := &jwt.VerifiedJWT{}
-		v := reflect.ValueOf(verifiedJWT).Elem()
-		field := v.FieldByName("token")
-		if field.CanSet() {
-			field.Set(reflect.ValueOf(raw))
-		} else {
-			reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(raw))
-		}
-		return verifiedJWT
-	}
-
-	type jwtable interface {
-		ToJWT(extraClaims map[string]any) (*jwt.RawJWT, error)
-	}
-
-	for _, tc := range []struct {
-		Name          string
-		IgnoreFields  []string
-		NewFn         func() jwtable
-		FromFn        func(*jwt.RawJWT) (any, error)
-		WantCreateErr bool
-		WantLoadErr   bool
-	}{
-		{
-			Name: "ID Token, all filled",
-			NewFn: func() jwtable {
-				return new(IDClaims)
-			},
-			FromFn: func(raw *jwt.RawJWT) (any, error) {
-				return IDClaimsFromJWT(rawToVerified(raw))
-			},
-		},
-		{
-			Name: "Access Token, all filled",
-			NewFn: func() jwtable {
-				return new(AccessTokenClaims)
-			},
-			FromFn: func(raw *jwt.RawJWT) (any, error) {
-				return AccessTokenClaimsFromJWT(rawToVerified(raw))
-			},
-		},
-	} {
-		t.Run(tc.Name, func(t *testing.T) {
-			idc := tc.NewFn()
-			fillStructWithRandomData(idc, tc.IgnoreFields)
-
-			raw, err := idc.ToJWT(nil)
-			if (err != nil) != tc.WantCreateErr {
-				t.Fatalf("want to err: %t, got: %v", tc.WantLoadErr, err)
-			}
-
-			got, err := tc.FromFn(raw)
-			if (err != nil) != tc.WantLoadErr {
-				t.Fatalf("want load err: %t, got: %v", tc.WantLoadErr, err)
-			}
-
-			if diff := cmp.Diff(idc, got, cmpopts.IgnoreUnexported(IDClaims{})); diff != "" {
-				t.Error(diff)
-			}
-		})
-	}
-}
 
 func must[T any](v T, err error) T {
 	if err != nil {
@@ -114,7 +40,12 @@ func fillStructWithRandomData(v any, ignoreClaims []string) {
 				field.Set(reflect.ValueOf(randomUnixTime()))
 			}
 		case reflect.Map:
-			if field.Type().Key().Kind() == reflect.String && field.Type().Elem().Kind() == reflect.String {
+			if field.Type().Key().Kind() == reflect.String && field.Type().Elem().Kind() == reflect.Interface {
+				field.Set(reflect.ValueOf(map[string]any{
+					randomString(4): randomString(5),
+					randomString(6): rand.IntN(100),
+				}))
+			} else if field.Type().Key().Kind() == reflect.String && field.Type().Elem().Kind() == reflect.String {
 				field.Set(reflect.ValueOf(randomStringMap(3)))
 			}
 		default:

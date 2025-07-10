@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/tink-crypto/tink-go/v2/jwt"
@@ -94,6 +96,93 @@ type IDClaims struct {
 	// even when the authorized party is the same as the sole audience. The azp
 	// value is a case sensitive string containing a StringOrURI value.
 	AZP string `json:"azp,omitempty"`
+
+	// Extra contains any other claims that are not part of the standard set.
+	// These claims will be marshalled and unmarshalled from the JWT.
+	Extra map[string]any `json:"-"`
+}
+
+func (i *IDClaims) MarshalJSON() ([]byte, error) {
+	// Get all the json tags from the struct to check for conflicts
+	tags := make(map[string]struct{})
+	val := reflect.TypeOf(*i)
+	for j := 0; j < val.NumField(); j++ {
+		field := val.Field(j)
+		tag := field.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		name := strings.Split(tag, ",")[0]
+		if name != "" {
+			tags[name] = struct{}{}
+		}
+	}
+
+	for k := range i.Extra {
+		if _, ok := tags[k]; ok {
+			return nil, fmt.Errorf("extra claim %q conflicts with standard claim", k)
+		}
+	}
+
+	type alias IDClaims
+	b, err := json.Marshal(alias(*i)) // use alias to prevent recursion
+	if err != nil {
+		return nil, err
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+
+	for k, v := range i.Extra {
+		m[k] = v
+	}
+
+	return json.Marshal(m)
+}
+
+func (i *IDClaims) UnmarshalJSON(b []byte) error {
+	type alias IDClaims
+	if err := json.Unmarshal(b, (*alias)(i)); err != nil {
+		return err
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+
+	// Get all the json tags from the struct to know which fields are standard
+	tags := make(map[string]struct{})
+	val := reflect.TypeOf(*i)
+	for j := 0; j < val.NumField(); j++ {
+		field := val.Field(j)
+		tag := field.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		name := strings.Split(tag, ",")[0]
+		if name != "" {
+			tags[name] = struct{}{}
+		}
+	}
+	i.Extra = make(map[string]any)
+	for k, v := range m {
+		if _, ok := tags[k]; !ok {
+			i.Extra[k] = v
+		}
+	}
+
+	return nil
+}
+
+func (i *IDClaims) setExtra(extra map[string]any) {
+	i.Extra = extra
+}
+
+func (i *IDClaims) getExtra() map[string]any {
+	return i.Extra
 }
 
 func (i *IDClaims) String() string {
@@ -145,6 +234,9 @@ func (i *IDClaims) ToJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
 	}
 	if i.AZP != "" {
 		opts.CustomClaims["azp"] = i.AZP
+	}
+	if len(i.Extra) > 0 {
+		opts.CustomClaims["extra_claims"] = i.Extra
 	}
 	for k, v := range extraClaims {
 		if _, ok := opts.CustomClaims[k]; ok {
@@ -244,6 +336,14 @@ func IDClaimsFromJWT(verified *jwt.VerifiedJWT) (*IDClaims, error) {
 			errs = errors.Join(errs, err)
 		}
 		c.AZP = v
+	}
+	if verified.HasObjectClaim("extra_claims") {
+		extra, err := verified.ObjectClaim("extra_claims")
+		if err != nil {
+			errs = errors.Join(errs, fmt.Errorf("parsing extra_claims: %w", err))
+		} else {
+			c.Extra = extra
+		}
 	}
 	if errs != nil {
 		return nil, errs
