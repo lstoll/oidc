@@ -1,15 +1,10 @@
 package claims
 
 import (
-	"fmt"
 	"math/rand/v2"
 	"reflect"
-	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/tink-crypto/tink-go/v2/jwt"
-	"github.com/tink-crypto/tink-go/v2/keyset"
 )
 
 func fillStructWithRandomData(v any) {
@@ -97,70 +92,4 @@ func equalMapStringAny(x, y map[string]any) bool {
 		}
 	}
 	return true
-}
-
-type claimer interface {
-	ToRawJWT(map[string]any) (*jwt.RawJWT, error)
-}
-
-func newVerifiedJWT(t *testing.T, c claimer, extraClaims map[string]any) (*jwt.VerifiedJWT, error) {
-	t.Helper()
-
-	// Use HMAC-SHA256 instead of ES256 for faster signing
-	kh, err := keyset.NewHandle(jwt.RawHS256Template())
-	if err != nil {
-		return nil, fmt.Errorf("creating keyset handle: %w", err)
-	}
-
-	rawJWT, err := c.ToRawJWT(extraClaims)
-	if err != nil {
-		return nil, fmt.Errorf("creating raw JWT: %w", err)
-	}
-
-	// Use MAC for HMAC signing and verification
-	mac, err := jwt.NewMAC(kh)
-	if err != nil {
-		return nil, fmt.Errorf("creating MAC: %w", err)
-	}
-
-	compact, err := mac.ComputeMACAndEncode(rawJWT)
-	if err != nil {
-		return nil, fmt.Errorf("signing JWT: %w", err)
-	}
-
-	// Create validator with appropriate options
-	opts := &jwt.ValidatorOpts{
-		ClockSkew: 5 * time.Minute,
-	}
-
-	// Set expected audience if present
-	if aud, err := rawJWT.Audiences(); err == nil && len(aud) > 0 {
-		opts.ExpectedAudience = &aud[0]
-	}
-
-	// Set expected issuer if present
-	if rawJWT.HasIssuer() {
-		if iss, err := rawJWT.Issuer(); err == nil {
-			opts.ExpectedIssuer = &iss
-		}
-	}
-
-	// Set expected type header if present
-	if rawJWT.HasTypeHeader() {
-		if th, err := rawJWT.TypeHeader(); err == nil {
-			opts.ExpectedTypeHeader = &th
-		}
-	}
-
-	// Allow missing expiration for testing
-	if !rawJWT.HasExpiration() {
-		opts.AllowMissingExpiration = true
-	}
-
-	val, err := jwt.NewValidator(opts)
-	if err != nil {
-		return nil, fmt.Errorf("creating validator: %w", err)
-	}
-
-	return mac.VerifyMACAndDecode(compact, val)
 }

@@ -120,7 +120,7 @@ func TestIDTokenVerification(t *testing.T) {
 		},
 	} {
 		t.Run(tc.Name, func(t *testing.T) {
-			jwt, err := tc.Token.ToRawJWT(nil)
+			jwt, err := tc.Token.ToRawJWT()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -178,7 +178,7 @@ func TestAccessTokenVerification(t *testing.T) {
 		},
 	} {
 		t.Run(tc.Name, func(t *testing.T) {
-			jwt, err := tc.Token.ToRawJWT(nil)
+			jwt, err := tc.Token.ToRawJWT()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -260,7 +260,7 @@ func TestAccessTokenHeaderRequiredVerification(t *testing.T) {
 		Expiry:   claims.UnixTime(time.Now().Add(1 * time.Minute).Unix()),
 		Audience: claims.StrOrSlice([]string{"hello"}),
 	}
-	jwt, err := idclaims.ToRawJWT(nil)
+	jwt, err := idclaims.ToRawJWT()
 	if err != nil {
 		t.Fatal(err)
 	}

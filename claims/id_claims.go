@@ -185,7 +185,7 @@ func (i *RawIDClaims) String() string {
 	return string(m)
 }
 
-func (i *RawIDClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
+func (i *RawIDClaims) ToRawJWT() (*jwt.RawJWT, error) {
 	var exp *time.Time
 	if i.Expiry != 0 {
 		t := i.Expiry.Time()
@@ -210,39 +210,31 @@ func (i *RawIDClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT, error) 
 		NotBefore: nbf,
 		IssuedAt:  iat,
 	}
-	// Use a temp map to not modify the CustomClaims map directly
-	customClaims := make(map[string]any)
+	opts.CustomClaims = make(map[string]any)
 
 	if i.AuthTime != 0 {
-		customClaims["auth_time"] = int(i.AuthTime)
+		opts.CustomClaims["auth_time"] = int(i.AuthTime)
 	}
 	if i.Nonce != "" {
-		customClaims["nonce"] = i.Nonce
+		opts.CustomClaims["nonce"] = i.Nonce
 	}
 	if i.ACR != "" {
-		customClaims["acr"] = i.ACR
+		opts.CustomClaims["acr"] = i.ACR
 	}
 	if i.AMR != nil {
-		customClaims["amr"] = sliceToAnySlice(i.AMR)
+		opts.CustomClaims["amr"] = sliceToAnySlice(i.AMR)
 	}
 	if i.AZP != "" {
-		customClaims["azp"] = i.AZP
+		opts.CustomClaims["azp"] = i.AZP
 	}
 	if len(i.Extra) > 0 {
 		for k, v := range i.Extra {
-			if _, ok := customClaims[k]; ok {
+			if _, ok := opts.CustomClaims[k]; ok {
 				return nil, fmt.Errorf("duplicate/reserved claim %s", k)
 			}
-			customClaims[k] = v
+			opts.CustomClaims[k] = v
 		}
 	}
-	for k, v := range extraClaims {
-		if _, ok := customClaims[k]; ok {
-			return nil, fmt.Errorf("duplicate/reserved claim %s", k)
-		}
-		customClaims[k] = v
-	}
-	opts.CustomClaims = customClaims
 
 	raw, err := jwt.NewRawJWT(opts)
 	if err != nil {

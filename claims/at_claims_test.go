@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/lstoll/oidc/internal/th"
+	"github.com/lstoll/oidc/internal"
 )
 
 func TestRawAccessTokenClaims_Roundtrip(t *testing.T) {
@@ -25,7 +25,7 @@ func TestRawAccessTokenClaims_Roundtrip(t *testing.T) {
 	want.Audience = []string{"a"}
 
 	// Test that ToRawJWT preserves all the claims.
-	rawJWT, err := want.ToRawJWT(nil)
+	rawJWT, err := want.ToRawJWT()
 	if err != nil {
 		t.Fatalf("ToRawJWT() error = %v", err)
 	}
@@ -70,7 +70,7 @@ func TestVerifiedAccessToken(t *testing.T) {
 	// entry, or a multi entry array.
 	rac.Audience = []string{"a"}
 
-	verifiedJWT := th.Must(newVerifiedJWT(t, rac, nil))
+	verifiedJWT := internal.NewVerifiedJWTFromClaims(t, rac)
 	vat := &VerifiedAccessToken{VerifiedJWT: verifiedJWT}
 
 	if !vat.HasClientID() {

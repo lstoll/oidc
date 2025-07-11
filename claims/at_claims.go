@@ -186,7 +186,7 @@ func (a *RawAccessTokenClaims) String() string {
 	return string(m)
 }
 
-func (a *RawAccessTokenClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT, error) {
+func (a *RawAccessTokenClaims) ToRawJWT() (*jwt.RawJWT, error) {
 	var exp *time.Time
 	if a.Expiry != 0 {
 		t := a.Expiry.Time()
@@ -242,12 +242,6 @@ func (a *RawAccessTokenClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT
 			}
 			customClaims[k] = v
 		}
-	}
-	for k, v := range extraClaims {
-		if _, ok := customClaims[k]; ok {
-			return nil, fmt.Errorf("duplicate/reserved claim %s", k)
-		}
-		customClaims[k] = v
 	}
 	opts.CustomClaims = customClaims
 
