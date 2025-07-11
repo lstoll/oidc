@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"reflect"
-	"slices"
 	"testing"
 	"time"
 
@@ -20,17 +19,11 @@ func must[T any](v T, err error) T {
 	return v
 }
 
-func fillStructWithRandomData(v any, ignoreClaims []string) {
+func fillStructWithRandomData(v any) {
 	val := reflect.ValueOf(v).Elem()
-	typeOfV := val.Type()
 
 	for i := 0; i < val.NumField(); i++ {
 		field := val.Field(i)
-		jsonTag := typeOfV.Field(i).Tag.Get("json")
-
-		if slices.Contains(ignoreClaims, jsonTag) {
-			continue
-		}
 
 		switch field.Kind() {
 		case reflect.String:

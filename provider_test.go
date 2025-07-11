@@ -3,7 +3,6 @@ package oidc
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,46 +16,6 @@ import (
 	"github.com/tink-crypto/tink-go/v2/keyset"
 	"golang.org/x/oauth2"
 )
-
-/*
-
-
-func TestDiscovery(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	m := http.NewServeMux()
-	ts := httptest.NewServer(m)
-
-	kh, err := NewKeysHandler(PublicHandle, 1*time.Nanosecond)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.Handle("/jwks.json", kh)
-
-	pm := &ProviderMetadata{
-		Issuer:                ts.URL,
-		JWKSURI:               ts.URL + "/jwks.json",
-		AuthorizationEndpoint: "/auth",
-		TokenEndpoint:         "/token",
-	}
-
-	ch, err := NewConfigurationHandler(pm, WithCoreDefaults())
-	if err != nil {
-		t.Fatalf("error creating handler: %v", err)
-	}
-	m.Handle(oidcwk, ch)
-
-	_, err = NewClient(ctx, ts.URL)
-	if err != nil {
-		t.Fatalf("failed to create discovery client: %v", err)
-	}
-}
-
-
-*/
 
 func TestProviderDiscovery(t *testing.T) {
 	svr, _ := newMockDiscoveryServer(t)
@@ -327,7 +286,6 @@ func newMockDiscoveryServer(t *testing.T) (*httptest.Server, *keyset.Handle) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	log.Printf("ks: %#v", err)
 	ph, err := h.Public()
 	if err != nil {
 		t.Fatal(err)
@@ -379,13 +337,11 @@ func signJWTOpts(t *testing.T, h *keyset.Handle, jwtOpts *jwt.RawJWTOptions) str
 }
 
 func signRawJWT(t *testing.T, h *keyset.Handle, raw *jwt.RawJWT) string {
-	t.Helper()
-
-	mac, err := jwt.NewMAC(h)
+	signer, err := jwt.NewSigner(h)
 	if err != nil {
 		t.Fatalf("failed creating signer: %v", err)
 	}
-	signed, err := mac.ComputeMACAndEncode(raw)
+	signed, err := signer.SignAndEncode(raw)
 	if err != nil {
 		t.Fatalf("failed signing token: %v", err)
 	}

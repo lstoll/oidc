@@ -3,6 +3,7 @@ package claims
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"time"
@@ -134,9 +135,7 @@ func (i *RawIDClaims) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 
-	for k, v := range i.Extra {
-		m[k] = v
-	}
+	maps.Copy(m, i.Extra)
 
 	return json.Marshal(m)
 }

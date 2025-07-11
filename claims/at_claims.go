@@ -3,6 +3,7 @@ package claims
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"time"
@@ -135,9 +136,7 @@ func (a *RawAccessTokenClaims) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 
-	for k, v := range a.Extra {
-		m[k] = v
-	}
+	maps.Copy(m, a.Extra)
 
 	return json.Marshal(m)
 }
@@ -361,14 +360,5 @@ func (v *VerifiedAccessToken) stringSliceClaim(claimName string) ([]string, erro
 		return nil, fmt.Errorf("getting %s: %w", claimName, err)
 	}
 
-	strs := make([]string, len(claim))
-	for i, v := range claim {
-		s, ok := v.(string)
-		if !ok {
-			return nil, fmt.Errorf("%s claim is not a slice of strings", claimName)
-		}
-		strs[i] = s
-	}
-
-	return strs, nil
+	return anySliceToSlice[string](claim)
 }

@@ -11,7 +11,7 @@ import (
 
 func TestRawIDClaims_Roundtrip(t *testing.T) {
 	want := &RawIDClaims{}
-	fillStructWithRandomData(want, nil)
+	fillStructWithRandomData(want)
 	// Set time fields to ensure valid tokens
 	now := time.Now()
 	want.Expiry = UnixTime(now.Add(24 * time.Hour).Unix()) // 24 hours in the future
@@ -57,7 +57,7 @@ func TestRawIDClaims_Roundtrip(t *testing.T) {
 
 func TestVerifiedIDClaims(t *testing.T) {
 	ric := &RawIDClaims{}
-	fillStructWithRandomData(ric, nil)
+	fillStructWithRandomData(ric)
 	// Set time fields to ensure valid tokens
 	now := time.Now()
 	ric.Expiry = UnixTime(now.Add(24 * time.Hour).Unix()) // 24 hours in the future

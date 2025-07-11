@@ -11,7 +11,7 @@ import (
 
 func TestRawAccessTokenClaims_Roundtrip(t *testing.T) {
 	want := &RawAccessTokenClaims{}
-	fillStructWithRandomData(want, nil)
+	fillStructWithRandomData(want)
 	// Set time fields to ensure valid tokens
 	now := time.Now()
 	want.Expiry = UnixTime(now.Add(24 * time.Hour).Unix()) // 24 hours in the future
@@ -58,7 +58,7 @@ func TestRawAccessTokenClaims_Roundtrip(t *testing.T) {
 
 func TestVerifiedAccessToken(t *testing.T) {
 	rac := &RawAccessTokenClaims{}
-	fillStructWithRandomData(rac, nil)
+	fillStructWithRandomData(rac)
 	// Set time fields to ensure valid tokens
 	now := time.Now()
 	rac.Expiry = UnixTime(now.Add(24 * time.Hour).Unix()) // 24 hours in the future
