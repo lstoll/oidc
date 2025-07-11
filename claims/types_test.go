@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/lstoll/oidc/internal/th"
 )
 
 func TestCustomMarshaling(t *testing.T) {
@@ -16,7 +17,7 @@ func TestCustomMarshaling(t *testing.T) {
 	}
 
 	c := container{
-		UnixTime:         UnixTime(must(time.Parse("2006-Jan-02", "2019-Nov-20")).Unix()),
+		UnixTime:         UnixTime(th.Must(time.Parse("2006-Jan-02", "2019-Nov-20")).Unix()),
 		StrOrSliceSingle: StrOrSlice([]string{"a"}),
 		StrOrSliceSlice:  StrOrSlice([]string{"a", "b"}),
 	}
@@ -39,31 +40,5 @@ func TestCustomMarshaling(t *testing.T) {
 
 	if diff := cmp.Diff(c, gc); diff != "" {
 		t.Error(diff)
-	}
-}
-
-func TestPTROrNil(t *testing.T) {
-	tester := struct {
-		ZeroS   string
-		ZeroI   int
-		FilledS string
-		FilledI int
-	}{
-		FilledS: "hello",
-		FilledI: 42,
-	}
-
-	if v := ptrOrNil(tester.ZeroS); v != nil {
-		t.Error("empty val should be nil")
-	}
-	if v := ptrOrNil(tester.ZeroI); v != nil {
-		t.Error("empty val should be nil")
-	}
-
-	if v := ptrOrNil(tester.FilledS); v == nil || *v != tester.FilledS {
-		t.Error("val should not be nil, and should match original")
-	}
-	if v := ptrOrNil(tester.FilledI); v == nil || *v != tester.FilledI {
-		t.Error("val should not be nil, and should match original")
 	}
 }

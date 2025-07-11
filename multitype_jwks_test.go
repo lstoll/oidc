@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lstoll/oidc/internal/th"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 )
@@ -68,9 +69,9 @@ func TestMultitypeJWKS(t *testing.T) {
 	}
 
 	rawjwt, err := jwt.NewRawJWT(&jwt.RawJWTOptions{
-		Issuer:    ptr("https://test"),
-		Audience:  ptr("test"),
-		ExpiresAt: ptr(time.Now().Add(1 * time.Minute)),
+		Issuer:    th.Ptr("https://test"),
+		Audience:  th.Ptr("test"),
+		ExpiresAt: th.Ptr(time.Now().Add(1 * time.Minute)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -95,8 +96,8 @@ func TestMultitypeJWKS(t *testing.T) {
 	}
 
 	validator, err := jwt.NewValidator(&jwt.ValidatorOpts{
-		ExpectedIssuer:   ptr("https://test"),
-		ExpectedAudience: ptr("test"),
+		ExpectedIssuer:   th.Ptr("https://test"),
+		ExpectedAudience: th.Ptr("test"),
 	})
 	if err != nil {
 		t.Fatal(err)

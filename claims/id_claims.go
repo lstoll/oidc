@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lstoll/oidc/internal/th"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 )
 
@@ -202,8 +203,8 @@ func (i *RawIDClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT, error) 
 	}
 
 	opts := &jwt.RawJWTOptions{
-		Issuer:    ptrOrNil(i.Issuer),
-		Subject:   ptrOrNil(i.Subject),
+		Issuer:    th.PtrOrNil(i.Issuer),
+		Subject:   th.PtrOrNil(i.Subject),
 		Audiences: i.Audience,
 		ExpiresAt: exp,
 		NotBefore: nbf,

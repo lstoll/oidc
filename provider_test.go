@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/lstoll/oidc/claims"
+	"github.com/lstoll/oidc/internal/th"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 	"golang.org/x/oauth2"
@@ -46,23 +47,23 @@ func TestTokenVerification(t *testing.T) {
 		{
 			Name: "Simple valid token",
 			Token: &jwt.RawJWTOptions{
-				Issuer:    ptr(svr.URL),
-				ExpiresAt: ptr(time.Now().Add(1 * time.Minute)),
+				Issuer:    th.Ptr(svr.URL),
+				ExpiresAt: th.Ptr(time.Now().Add(1 * time.Minute)),
 			},
 		},
 		{
 			Name: "Issuer mismatch",
 			Token: &jwt.RawJWTOptions{
-				Issuer:    ptr("https://other"),
-				ExpiresAt: ptr(time.Now().Add(1 * time.Minute)),
+				Issuer:    th.Ptr("https://other"),
+				ExpiresAt: th.Ptr(time.Now().Add(1 * time.Minute)),
 			},
 			WantErrStr: "validating issuer claim",
 		},
 		{
 			Name: "Expired",
 			Token: &jwt.RawJWTOptions{
-				Issuer:    ptr(svr.URL),
-				ExpiresAt: ptr(time.Now().Add(-1 * time.Minute)),
+				Issuer:    th.Ptr(svr.URL),
+				ExpiresAt: th.Ptr(time.Now().Add(-1 * time.Minute)),
 			},
 			WantErrStr: "token has expired",
 		},

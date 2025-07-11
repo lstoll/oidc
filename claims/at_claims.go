@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lstoll/oidc/internal/th"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 )
 
@@ -198,12 +199,12 @@ func (a *RawAccessTokenClaims) ToRawJWT(extraClaims map[string]any) (*jwt.RawJWT
 	}
 
 	opts := &jwt.RawJWTOptions{
-		TypeHeader: ptr(JWTTYPAccessToken),
-		Issuer:     ptrOrNil(a.Issuer),
-		Subject:    ptrOrNil(a.Subject),
+		TypeHeader: th.Ptr(JWTTYPAccessToken),
+		Issuer:     th.PtrOrNil(a.Issuer),
+		Subject:    th.PtrOrNil(a.Subject),
 		Audiences:  a.Audience,
 		ExpiresAt:  exp,
-		JWTID:      ptrOrNil(a.JWTID),
+		JWTID:      th.PtrOrNil(a.JWTID),
 		IssuedAt:   iat,
 	}
 

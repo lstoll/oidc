@@ -12,13 +12,6 @@ import (
 	"github.com/tink-crypto/tink-go/v2/keyset"
 )
 
-func must[T any](v T, err error) T {
-	if err != nil {
-		panic(err)
-	}
-	return v
-}
-
 func fillStructWithRandomData(v any) {
 	val := reflect.ValueOf(v).Elem()
 

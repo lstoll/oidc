@@ -92,15 +92,3 @@ func anySliceToSlice[T any](v []any) ([]T, error) {
 	}
 	return r, nil
 }
-
-func ptr[T any](v T) *T {
-	return &v
-}
-
-func ptrOrNil[T comparable](v T) *T {
-	var e T
-	if v == e {
-		return nil
-	}
-	return &v
-}

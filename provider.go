@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lstoll/oidc/claims"
+	"github.com/lstoll/oidc/internal/th"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 	"golang.org/x/oauth2"
@@ -243,14 +244,14 @@ func (p *Provider) VerifyAccessToken(ctx context.Context, tok *oauth2.Token, opt
 	}
 
 	vopts := &jwt.ValidatorOpts{
-		ExpectedAudience: ptrOrNil(opts.Audience),
+		ExpectedAudience: th.PtrOrNil(opts.Audience),
 		IgnoreAudiences:  opts.IgnoreAudience,
 	}
 
 	if !opts.IgnoreTokenTypeHeader {
 		// TODO the short version is a "SHOULD", not must. Do we want to
 		// fallback check the full one too?
-		vopts.ExpectedTypeHeader = ptr(typJWTAccessToken)
+		vopts.ExpectedTypeHeader = th.Ptr(typJWTAccessToken)
 	}
 
 	verified, err := p.VerifyToken(ctx, tok.AccessToken, vopts)
@@ -298,7 +299,7 @@ func (p *Provider) VerifyIDToken(ctx context.Context, tok *oauth2.Token, opts ID
 	}
 
 	vopts := &jwt.ValidatorOpts{
-		ExpectedAudience: ptrOrNil(opts.Audience),
+		ExpectedAudience: th.PtrOrNil(opts.Audience),
 		IgnoreAudiences:  opts.IgnoreAudience,
 	}
 
@@ -371,16 +372,4 @@ func (s *staticPublicHandle) PublicHandle(context.Context) (*keyset.Handle, erro
 
 func NewStaticPublicHandle(h *keyset.Handle) PublicHandle {
 	return &staticPublicHandle{h: h}
-}
-
-func ptr[T any](v T) *T {
-	return &v
-}
-
-func ptrOrNil[T comparable](v T) *T {
-	var e T
-	if v == e {
-		return nil
-	}
-	return &v
 }

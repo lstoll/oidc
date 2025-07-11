@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/lstoll/oidc/internal/th"
 )
 
 func TestRawIDClaims_Roundtrip(t *testing.T) {
@@ -68,7 +69,7 @@ func TestVerifiedIDClaims(t *testing.T) {
 	// entry, or a multi entry array.
 	ric.Audience = []string{"a"}
 
-	verifiedJWT := must(newVerifiedJWT(t, ric, nil))
+	verifiedJWT := th.Must(newVerifiedJWT(t, ric, nil))
 	vic := &VerifiedIDClaims{VerifiedJWT: verifiedJWT}
 
 	if !vic.HasAuthTime() {
