@@ -265,6 +265,11 @@ type VerifiedAccessToken struct {
 	*jwt.VerifiedJWT
 }
 
+// NewVerifiedAccessToken creates a new VerifiedAccessToken from a VerifiedJWT.
+func NewVerifiedAccessToken(v *jwt.VerifiedJWT) *VerifiedAccessToken {
+	return &VerifiedAccessToken{VerifiedJWT: v}
+}
+
 // HasClientID returns true if the "client_id" claim is present.
 func (v *VerifiedAccessToken) HasClientID() bool {
 	return v.HasStringClaim("client_id")

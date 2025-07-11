@@ -258,6 +258,11 @@ type VerifiedIDClaims struct {
 	*jwt.VerifiedJWT
 }
 
+// NewVerifiedIDClaims creates a new VerifiedIDClaims from a VerifiedJWT.
+func NewVerifiedIDClaims(v *jwt.VerifiedJWT) *VerifiedIDClaims {
+	return &VerifiedIDClaims{VerifiedJWT: v}
+}
+
 // HasAuthTime returns true if the "auth_time" claim is present.
 func (v *VerifiedIDClaims) HasAuthTime() bool {
 	return v.HasNumberClaim("auth_time")
