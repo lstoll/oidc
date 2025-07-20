@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lstoll/oidc/internal/th"
+	"github.com/lstoll/oauth2ext/internal/th"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 )

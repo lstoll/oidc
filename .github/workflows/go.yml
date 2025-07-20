@@ -42,4 +42,4 @@ jobs:
         CGO_ENABLED: 0
       run: |
         go build -o oidccli ./cmd/oidccli
-        go tool nm oidccli | grep -F 'oidc/clitoken.(*KeychainCLICredentialCache)'
+        go tool nm oidccli | grep -F 'oauth2ext/clitoken.(*KeychainCLICredentialCache)'

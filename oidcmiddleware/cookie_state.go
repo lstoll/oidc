@@ -1,4 +1,4 @@
-package middleware
+package oidcmiddleware
 
 import (
 	"encoding/base64"
@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lstoll/oidc"
-	"github.com/lstoll/oidc/claims"
+	"github.com/lstoll/oauth2ext/claims"
+	"github.com/lstoll/oauth2ext/oidc"
 	"golang.org/x/oauth2"
 )
 

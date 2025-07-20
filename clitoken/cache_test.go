@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/lstoll/oidc/tokencache"
+	"github.com/lstoll/oauth2ext/tokencache"
 	"golang.org/x/oauth2"
 )
 

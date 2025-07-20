@@ -10,7 +10,7 @@ import (
 
 	"net/http"
 
-	"github.com/lstoll/oidc"
+	"github.com/lstoll/oauth2ext/oidc"
 	"golang.org/x/oauth2"
 )
 

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lstoll/oidc/claims"
-	"github.com/lstoll/oidc/internal/th"
+	"github.com/lstoll/oauth2ext/claims"
+	"github.com/lstoll/oauth2ext/internal/th"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 	"golang.org/x/oauth2"
