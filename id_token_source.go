@@ -46,12 +46,16 @@ func (i *idTokenSource) Token() (*oauth2.Token, error) {
 	*newToken = *t
 	newToken.AccessToken = idt
 	if i.provider != nil {
-		_, cl, err := i.provider.VerifyIDToken(context.TODO(), t, IDTokenValidationOpts{IgnoreAudience: true})
+		verified, err := i.provider.VerifyIDToken(context.TODO(), t, IDTokenValidationOpts{IgnoreAudience: true})
 		if err != nil {
 			return nil, fmt.Errorf("verifying id token: %w", err)
 		}
+		exp, err := verified.ExpiresAt()
+		if err != nil {
+			return nil, fmt.Errorf("getting expiry from token: %w", err)
+		}
 		newToken.ExpiresIn = 0
-		newToken.Expiry = cl.Expiry.Time()
+		newToken.Expiry = exp
 	}
 	return newToken, nil
 }

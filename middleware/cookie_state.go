@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lstoll/oidc"
+	"github.com/lstoll/oidc/claims"
 	"golang.org/x/oauth2"
 )
 
@@ -277,7 +278,7 @@ func peekIDT(t *oauth2.Token) (tok string, exp time.Time, _ error) {
 		return "", time.Time{}, fmt.Errorf("id_token payload decode failed: %w", err)
 	}
 
-	var cl *oidc.IDClaims
+	var cl *claims.RawIDClaims
 	if err := json.Unmarshal(cb, &cl); err != nil {
 		return "", time.Time{}, fmt.Errorf("unmarshaling claims failed: %w", err)
 	}

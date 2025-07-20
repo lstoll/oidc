@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/lstoll/oidc"
+	"github.com/lstoll/oidc/internal/th"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 	"golang.org/x/oauth2"
@@ -57,8 +58,7 @@ func newMockOIDCServer() *mockOIDCServer {
 	mux.HandleFunc("GET /keys", s.handleKeys)
 	s.mux = mux
 
-	// Very short key. Used only for testing so generation time is quick.
-	s.keyset = mustGenHandle()
+	s.keyset = th.Must(keyset.NewHandle(jwt.ES256Template()))
 
 	return s
 }
@@ -155,7 +155,7 @@ func (s *mockOIDCServer) handleToken(w http.ResponseWriter, r *http.Request) {
 		Subject:      &sub,
 		Issuer:       &s.baseURL,
 		Audience:     &clientID,
-		ExpiresAt:    ptr(now.Add(time.Minute)),
+		ExpiresAt:    th.Ptr(now.Add(time.Minute)),
 		IssuedAt:     &now,
 		CustomClaims: map[string]any{},
 	}
@@ -216,7 +216,13 @@ func (s *mockOIDCServer) handleKeys(w http.ResponseWriter, r *http.Request) {
 
 func TestMiddleware_HappyPath(t *testing.T) {
 	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(fmt.Appendf(nil, "sub: %s", IDClaimsFromContext(r.Context()).Subject))
+		idt := IDJWTFromContext(r.Context())
+		sub, err := idt.Subject()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(fmt.Appendf(nil, "sub: %s", sub))
 	})
 
 	oidcServer, oidcHTTPServer := startMockOIDCServer(t)
@@ -294,14 +300,10 @@ func TestMiddleware_HappyPath(t *testing.T) {
 
 func TestContext(t *testing.T) {
 	var ( // Capture in handler
-		// gotTokSrc oauth2.TokenSource
-		gotClaims *oidc.IDClaims
-		gotJWT    *jwt.VerifiedJWT
-		// gotRaw    string
+		gotJWT *jwt.VerifiedJWT
 	)
 	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// gotTokSrc = TokenSourceFromContext(r.Context())
-		gotClaims = IDClaimsFromContext(r.Context())
 		gotJWT = IDJWTFromContext(r.Context())
 		// gotRaw = RawIDTokenFromContext(r.Context())
 	})
@@ -343,26 +345,13 @@ func TestContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if gotClaims.Subject != "valid-subject" {
-		t.Errorf("want claims sub valid-subject, got: %s", gotClaims.Subject)
-	}
-
 	jwtsub, err := gotJWT.Subject()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if jwtsub != "valid-subject" {
-		t.Errorf("want jwt sub valid-subject, got: %s", gotClaims.Subject)
+		t.Errorf("want jwt sub valid-subject, got: %s", jwtsub)
 	}
-
-	// if gotRaw == "" {
-	// 	t.Error("context missing id_token")
-	// }
-
-	// _, err = gotTokSrc.Token()
-	// if err != nil {
-	// 	t.Fatalf("calling token source token: %v", err)
-	// }
 }
 
 func checkResponse(t *testing.T, resp *http.Response) (body []byte) {
@@ -378,17 +367,4 @@ func checkResponse(t *testing.T, resp *http.Response) (body []byte) {
 	}
 
 	return body
-}
-
-func mustGenHandle() *keyset.Handle {
-	h, err := keyset.NewHandle(jwt.RS256_2048_F4_Key_Template())
-	if err != nil {
-		panic(err)
-	}
-
-	return h
-}
-
-func ptr[T any](v T) *T {
-	return &v
 }
