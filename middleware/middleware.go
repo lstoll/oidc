@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -9,7 +10,6 @@ import (
 	"time"
 
 	"github.com/lstoll/oidc"
-	"github.com/lstoll/oidc/internal"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"golang.org/x/oauth2"
 )
@@ -284,7 +284,7 @@ func (h *Handler) startAuthentication(r *http.Request, session *SessionData) str
 	session.Token = nil
 
 	var (
-		state         = internal.RandText()
+		state         = rand.Text()
 		pkceChallenge string
 		returnTo      string
 	)

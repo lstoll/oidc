@@ -2,13 +2,13 @@ package clitoken
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
 
-	"github.com/lstoll/oidc/internal"
 	"golang.org/x/oauth2"
 )
 
@@ -125,7 +125,7 @@ func (c *cliTokenSource) Token() (*oauth2.Token, error) {
 	// shallow clone, as we mutate it
 	o2cfg := c.cfg.OAuth2Config
 
-	state := internal.RandText()
+	state := rand.Text()
 
 	type result struct {
 		code string
