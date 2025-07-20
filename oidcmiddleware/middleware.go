@@ -1,4 +1,4 @@
-package middleware
+package oidcmiddleware
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/lstoll/oidc"
+	"github.com/lstoll/oauth2ext/oidc"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"golang.org/x/oauth2"
 )

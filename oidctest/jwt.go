@@ -3,7 +3,7 @@ package oidctest
 import (
 	"testing"
 
-	"github.com/lstoll/oidc/internal"
+	"github.com/lstoll/oauth2ext/internal"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 )
 

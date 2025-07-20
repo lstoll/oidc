@@ -1,4 +1,4 @@
-package middleware
+package oidcmiddleware
 
 import (
 	"encoding/base64"
@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/lstoll/oidc"
+	"github.com/lstoll/oauth2ext/oidc"
 	"golang.org/x/oauth2"
 )
 

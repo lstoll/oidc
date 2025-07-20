@@ -1,4 +1,4 @@
-package middleware
+package oidcmiddleware
 
 import (
 	"bytes"
@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lstoll/oidc"
-	"github.com/lstoll/oidc/internal/th"
+	"github.com/lstoll/oauth2ext/internal/th"
+	"github.com/lstoll/oauth2ext/oidc"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 	"golang.org/x/oauth2"

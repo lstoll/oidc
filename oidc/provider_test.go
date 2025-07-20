@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/lstoll/oidc/claims"
-	"github.com/lstoll/oidc/internal/th"
+	"github.com/lstoll/oauth2ext/claims"
+	"github.com/lstoll/oauth2ext/internal/th"
 	"github.com/tink-crypto/tink-go/v2/jwt"
 	"github.com/tink-crypto/tink-go/v2/keyset"
 	"golang.org/x/oauth2"

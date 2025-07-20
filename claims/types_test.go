@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/lstoll/oidc/internal/th"
+	"github.com/lstoll/oauth2ext/internal/th"
 )
 
 func TestCustomMarshaling(t *testing.T) {

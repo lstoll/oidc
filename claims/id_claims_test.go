@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/lstoll/oidc/internal"
+	"github.com/lstoll/oauth2ext/internal"
 )
 
 func TestRawIDClaims_Roundtrip(t *testing.T) {

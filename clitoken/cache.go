@@ -14,8 +14,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/lstoll/oidc"
-	"github.com/lstoll/oidc/tokencache"
+	"github.com/lstoll/oauth2ext/oidc"
+	"github.com/lstoll/oauth2ext/tokencache"
 	"golang.org/x/crypto/nacl/secretbox"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/oauth2"
