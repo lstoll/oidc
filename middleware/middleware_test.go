@@ -216,7 +216,11 @@ func (s *mockOIDCServer) handleKeys(w http.ResponseWriter, r *http.Request) {
 
 func TestMiddleware_HappyPath(t *testing.T) {
 	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		idt := IDJWTFromContext(r.Context())
+		idt, ok := IDJWTFromContext(r.Context())
+		if !ok {
+			http.Error(w, "no ID token in context", http.StatusInternalServerError)
+			return
+		}
 		sub, err := idt.Subject()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -303,9 +307,12 @@ func TestContext(t *testing.T) {
 		gotJWT *jwt.VerifiedJWT
 	)
 	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// gotTokSrc = TokenSourceFromContext(r.Context())
-		gotJWT = IDJWTFromContext(r.Context())
-		// gotRaw = RawIDTokenFromContext(r.Context())
+		jwt, ok := IDJWTFromContext(r.Context())
+		if !ok {
+			http.Error(w, "no ID token in context", http.StatusInternalServerError)
+			return
+		}
+		gotJWT = jwt
 	})
 
 	oidcServer, oidcHTTPServer := startMockOIDCServer(t)

@@ -315,47 +315,22 @@ type contextData struct {
 
 // IDJWTFromContext returns the validated OIDC ID JWT from the given request
 // context.
-func IDJWTFromContext(ctx context.Context) *jwt.VerifiedJWT {
+func IDJWTFromContext(ctx context.Context) (*jwt.VerifiedJWT, bool) {
 	cd, ok := ctx.Value(tokenContextKey{}).(contextData)
 	if !ok {
-		return nil
+		return nil, false
 	}
 
-	return cd.jwt
+	return cd.jwt, true
 }
 
-/* TODO re-asses the usage of these once updating the consumer of this library.
- * e.g the ID vs access token split, how that works with the ID token source
- * in the root package etc. For now, ignore them. But there's likely use
- * for auth to external systems.
- *
- * For the token source, might be worth considering how we could manage
- * refreshing from it. Could maybe stash a pointer, and capture and update
- * the session after the wrapped request is called?
-
-// RawIDTokenFromContext returns the raw JWT from the given request context
-func RawIDTokenFromContext(ctx context.Context) string {
+// OAuth2TokenFromContext returns the oauth2 token for the current userfrom the
+// given request context.
+func OAuth2TokenFromContext(ctx context.Context) (*oauth2.Token, bool) {
 	cd, ok := ctx.Value(tokenContextKey{}).(contextData)
 	if !ok {
-		return ""
+		return nil, false
 	}
 
-	idt, ok := oidc.IDToken(cd.token)
-	if !ok {
-		return ""
-	}
-
-	return idt
+	return cd.token, true
 }
-
-// TokenSourceFromContext returns a usable tokensource from this request context. The request
-// must have been wrapped with the middleware for this to be initialized. This token source is
-func TokenSourceFromContext(ctx context.Context) oauth2.TokenSource {
-	cd, ok := ctx.Value(tokenContextKey{}).(contextData)
-	if !ok {
-		return nil
-	}
-
-	return oauth2.StaticTokenSource(cd.token)
-}
-*/
